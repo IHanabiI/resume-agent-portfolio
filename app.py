@@ -19,8 +19,10 @@ def load_app_modules():
     from src.exporter.docx_exporter import markdown_to_docx_bytes, save_docx
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
+    from src.github_reader import collect_github_context, github_context_to_text
     from src.graph.workflow import run_analysis, run_generation
     from src.llm_client import pretty_json
+    from src.memory_store import memory_to_json_text, memory_to_text, parse_memory_upload
     from src.schemas import UserAnswer
 
     return {
@@ -31,9 +33,14 @@ def load_app_modules():
         "build_full_markdown": build_full_markdown,
         "save_markdown": save_markdown,
         "extract_text_from_upload": extract_text_from_upload,
+        "collect_github_context": collect_github_context,
+        "github_context_to_text": github_context_to_text,
         "run_analysis": run_analysis,
         "run_generation": run_generation,
         "pretty_json": pretty_json,
+        "memory_to_json_text": memory_to_json_text,
+        "memory_to_text": memory_to_text,
+        "parse_memory_upload": parse_memory_upload,
         "UserAnswer": UserAnswer,
     }
 
@@ -45,6 +52,9 @@ def init_state() -> None:
         "analysis_state": None,
         "generation_state": None,
         "answers": [],
+        "memory_text": "",
+        "github_input": "",
+        "github_context": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -78,6 +88,7 @@ def main() -> None:
     elif not settings.openai_api_key:
         st.warning("当前未配置 OPENAI_API_KEY，且未启用演示兜底。")
 
+    render_context_section(modules)
     render_input_section(modules)
     if st.session_state.analysis_state:
         render_analysis_section(modules)
@@ -140,6 +151,8 @@ def render_input_section(modules) -> None:
             st.session_state.analysis_state = modules["run_analysis"](
                 st.session_state.resume_text,
                 st.session_state.job_description,
+                st.session_state.memory_text,
+                st.session_state.github_context,
             )
             st.session_state.generation_state = None
             st.session_state.answers = []
@@ -199,6 +212,8 @@ def render_questions(modules, questions) -> None:
     if st.button("生成定制简历", type="primary"):
         state = dict(st.session_state.analysis_state)
         state["user_answers"] = answers
+        state["memory_text"] = st.session_state.memory_text
+        state["github_context"] = st.session_state.github_context
         with st.spinner("正在生成简历并执行事实校验..."):
             st.session_state.generation_state = modules["run_generation"](state)
             tailored = st.session_state.generation_state["tailored_resume"]
@@ -254,6 +269,65 @@ def render_generation_section(modules) -> None:
         file_name="tailored_resume.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
+
+def render_context_section(modules) -> None:
+    st.header("0. 个人记忆与外部证据")
+    st.caption("这里用于补足原始简历没有写出的真实经历。Agent 只会把这些内容作为事实来源，不会凭空编造。")
+
+    memory_tab, github_tab = st.tabs(["个人记忆库", "GitHub 证据"])
+
+    with memory_tab:
+        memory_file = st.file_uploader("导入记忆库 JSON 或 TXT", type=["json", "txt"], key="memory_upload")
+        if memory_file:
+            text = memory_file.getvalue().decode("utf-8", errors="ignore")
+            memory = modules["parse_memory_upload"](text)
+            st.session_state.memory_text = modules["memory_to_text"](memory)
+            st.success("已导入个人记忆库。")
+
+        st.session_state.memory_text = st.text_area(
+            "个人记忆库",
+            value=st.session_state.memory_text,
+            height=180,
+            placeholder=(
+                "请记录原始简历没有写全、但真实存在的信息，例如：\n"
+                "- 我做过的项目、负责内容、技术栈\n"
+                "- 我熟悉但简历没写的工具/框架\n"
+                "- 可确认的数据、成果、奖项、证书\n"
+                "- 不希望写入简历的内容或表达偏好"
+            ),
+        )
+        st.download_button(
+            "下载记忆库 JSON",
+            data=modules["memory_to_json_text"](st.session_state.memory_text).encode("utf-8"),
+            file_name="user_memory.json",
+            mime="application/json",
+        )
+
+    with github_tab:
+        st.session_state.github_input = st.text_area(
+            "GitHub 用户名或仓库链接",
+            value=st.session_state.github_input,
+            height=100,
+            placeholder="例如：IHanabiI 或 https://github.com/IHanabiI/resume-agent-portfolio",
+        )
+        if st.button("读取 GitHub 公开信息"):
+            if not st.session_state.github_input.strip():
+                st.error("请先输入 GitHub 用户名或仓库链接。")
+            else:
+                with st.spinner("正在读取 GitHub 公开仓库信息..."):
+                    context = modules["collect_github_context"](st.session_state.github_input)
+                    st.session_state.github_context = modules["github_context_to_text"](context)
+                st.success("GitHub 信息读取完成。")
+
+        if st.session_state.github_context:
+            st.text_area("已收集到的 GitHub 证据", value=st.session_state.github_context, height=220)
+            st.download_button(
+                "下载 GitHub 证据 TXT",
+                data=st.session_state.github_context.encode("utf-8"),
+                file_name="github_context.txt",
+                mime="text/plain",
+            )
 
 
 if __name__ == "__main__":

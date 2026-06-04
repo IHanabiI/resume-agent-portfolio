@@ -26,6 +26,8 @@ def match_gap_node(state: ResumeAgentState) -> ResumeAgentState:
         state["candidate_profile"],
         state["job_analysis"],
         state["resume_text"],
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
         llm,
     )
     return {"gap_analysis": gap, "needs_questions": bool(gap.questions_to_user)}
@@ -45,6 +47,8 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         state["gap_analysis"],
         state["resume_text"],
         state.get("user_answers", []),
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
         llm,
     )
     return {"tailored_resume": result}
@@ -56,7 +60,8 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
         state["tailored_resume"],
         state["resume_text"],
         state.get("user_answers", []),
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
         llm,
     )
     return {"fact_check": checked}
-

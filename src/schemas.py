@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class EvidenceSnippet(BaseModel):
-    source_type: Literal["original_resume", "user_answer", "user_confirmed"] = "original_resume"
+    source_type: Literal["original_resume", "user_answer", "user_confirmed", "user_memory", "github"] = "original_resume"
     source_text: str = ""
 
 
@@ -68,9 +68,44 @@ class UserAnswer(BaseModel):
     related_jd_requirement: str = ""
 
 
+class MemoryFact(BaseModel):
+    category: str = ""
+    content: str = ""
+    evidence: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class UserMemory(BaseModel):
+    profile_summary: str = ""
+    strengths: list[MemoryFact] = Field(default_factory=list)
+    skills: list[MemoryFact] = Field(default_factory=list)
+    projects: list[MemoryFact] = Field(default_factory=list)
+    work_facts: list[MemoryFact] = Field(default_factory=list)
+    preferences: list[str] = Field(default_factory=list)
+    raw_notes: str = ""
+
+
+class GitHubRepositoryEvidence(BaseModel):
+    name: str = ""
+    url: str = ""
+    description: str = ""
+    languages: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+    readme_excerpt: str = ""
+    updated_at: str = ""
+
+
+class GitHubContext(BaseModel):
+    source: str = ""
+    profile_url: str = ""
+    summary: str = ""
+    repositories: list[GitHubRepositoryEvidence] = Field(default_factory=list)
+    raw_evidence: list[str] = Field(default_factory=list)
+
+
 class EvidenceItem(BaseModel):
     resume_claim: str = ""
-    source_type: Literal["original_resume", "user_answer", "user_confirmed", "none"] = "none"
+    source_type: Literal["original_resume", "user_answer", "user_confirmed", "user_memory", "github", "none"] = "none"
     source_text: str = ""
     status: Literal["verified", "needs_confirmation", "removed"] = "needs_confirmation"
 
@@ -88,4 +123,3 @@ class FactCheckResult(BaseModel):
     evidence_map: list[EvidenceItem] = Field(default_factory=list)
     removed_claims: list[str] = Field(default_factory=list)
     needs_confirmation: list[str] = Field(default_factory=list)
-

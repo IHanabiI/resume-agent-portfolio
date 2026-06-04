@@ -42,12 +42,23 @@ def build_generation_graph():
     return graph.compile()
 
 
-def run_analysis(resume_text: str, job_description: str) -> ResumeAgentState:
+def run_analysis(
+    resume_text: str,
+    job_description: str,
+    memory_text: str = "",
+    github_context: str = "",
+) -> ResumeAgentState:
     app = build_analysis_graph()
-    return app.invoke({"resume_text": resume_text, "job_description": job_description})
+    return app.invoke(
+        {
+            "resume_text": resume_text,
+            "job_description": job_description,
+            "memory_text": memory_text,
+            "github_context": github_context,
+        }
+    )
 
 
 def run_generation(state: ResumeAgentState) -> ResumeAgentState:
     app = build_generation_graph()
     return app.invoke(state)
-

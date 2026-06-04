@@ -11,20 +11,25 @@ def write_resume(
     gap: GapAnalysis,
     resume_text: str,
     user_answers: list[UserAnswer],
+    memory_text: str = "",
+    github_context: str = "",
     llm: LLMClient | None = None,
 ) -> TailoredResumeResult:
     llm = llm or LLMClient()
     prompt = load_prompt("resume_writer_prompt.md")
     result = llm.generate_structured(
-        "你是简历生成 Agent。事实优先于表达，禁止编造，禁止夸大。",
+        "你是简历生成 Agent。事实优先于表达，禁止编造，禁止夸大。可使用的事实来源只有原始简历、个人记忆库、GitHub 公开证据和用户补充回答。",
         (
             f"{prompt}\n\n候选人信息：\n{pretty_json(candidate)}\n\n岗位分析：\n{pretty_json(job)}"
-            f"\n\n缺口分析：\n{pretty_json(gap)}\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
+            f"\n\n缺口分析：\n{pretty_json(gap)}"
+            f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
             f"\n\n原始简历全文：\n{resume_text}"
+            f"\n\n个人记忆库：\n{memory_text}"
+            f"\n\nGitHub 公开证据：\n{github_context}"
         ),
         TailoredResumeResult,
     )
-    return result or _fallback_write(candidate, job, gap, user_answers)
+    return result or _fallback_write(candidate, job, gap, user_answers, memory_text, github_context)
 
 
 def _fallback_write(
@@ -32,6 +37,8 @@ def _fallback_write(
     job: JobAnalysis,
     gap: GapAnalysis,
     user_answers: list[UserAnswer],
+    memory_text: str,
+    github_context: str,
 ) -> TailoredResumeResult:
     lines = [
         f"# {candidate.name or '候选人'}",
@@ -41,7 +48,7 @@ def _fallback_write(
         "",
         "## 个人优势",
     ]
-    strengths = gap.matched_strengths or ["基于原始简历信息进行岗位适配表达，未添加无来源经历。"]
+    strengths = gap.matched_strengths or ["基于现有事实来源进行岗位适配表达，未添加无来源经历。"]
     for item in strengths[:5]:
         lines.append(f"- {item}")
 
@@ -71,16 +78,29 @@ def _fallback_write(
             for ach in project.achievements[:4]:
                 lines.append(f"- {ach}")
 
-    if candidate.education:
-        lines.extend(["", "## 教育背景"])
-        for edu in candidate.education:
-            lines.append(f"- {edu}")
-
-    answered = [a for a in user_answers if a.answer.strip() and a.answer.strip() not in {"没有", "跳过", "不清楚"}]
+    answered = [
+        a for a in user_answers
+        if a.answer.strip() and a.answer.strip().lower() not in {"没有", "跳过", "不清楚", "none", "skip", "not sure"}
+    ]
     if answered:
         lines.extend(["", "## 补充信息"])
         for answer in answered:
             lines.append(f"- {answer.answer.strip()}")
+
+    if memory_text.strip():
+        lines.extend(["", "## 记忆库可用事实"])
+        for line in _short_lines(memory_text)[:5]:
+            lines.append(f"- {line}")
+
+    if github_context.strip():
+        lines.extend(["", "## GitHub 相关证据"])
+        for line in _short_lines(github_context)[:5]:
+            lines.append(f"- {line}")
+
+    if candidate.education:
+        lines.extend(["", "## 教育背景"])
+        for edu in candidate.education:
+            lines.append(f"- {edu}")
 
     evidence = [
         EvidenceItem(
@@ -101,11 +121,37 @@ def _fallback_write(
                 status="verified",
             )
         )
+    if memory_text.strip():
+        evidence.append(
+            EvidenceItem(
+                resume_claim="使用个人记忆库补充候选人经历和优势",
+                source_type="user_memory",
+                source_text=memory_text[:500],
+                status="verified",
+            )
+        )
+    if github_context.strip():
+        evidence.append(
+            EvidenceItem(
+                resume_claim="参考 GitHub 公开仓库信息补充项目和技术证据",
+                source_type="github",
+                source_text=github_context[:500],
+                status="verified",
+            )
+        )
     return TailoredResumeResult(
         resume_markdown="\n".join(lines),
-        optimization_notes=["已按 JD 匹配点重排简历结构。", "没有为缺失技能或成果编造经历。"],
+        optimization_notes=["已按 JD 匹配点重排简历结构。", "已纳入个人记忆库和 GitHub 公开证据。", "没有为缺失技能或成果编造经历。"],
         integrated_keywords=[k for k in job.keywords if k][:12],
         still_missing_info=gap.missing_information[:8],
         evidence_map=evidence,
     )
 
+
+def _short_lines(text: str) -> list[str]:
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip(" -#\t")
+        if 8 <= len(line) <= 180:
+            lines.append(line)
+    return lines
