@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -22,8 +23,42 @@ def load_app_modules():
     from src.github_reader import collect_github_context, github_context_to_text
     from src.graph.workflow import run_analysis, run_generation
     from src.llm_client import pretty_json
-    from src.memory_store import build_memory_json_text, memory_to_json_text, memory_to_text, parse_memory_upload
-    from src.schemas import UserAnswer
+    from src import memory_store
+    from src.schemas import MemoryFact, UserAnswer, UserMemory
+
+    parse_memory_upload = memory_store.parse_memory_upload
+    memory_to_json_text = memory_store.memory_to_json_text
+    memory_to_text = memory_store.memory_to_text
+    build_memory_json_text = getattr(memory_store, "build_memory_json_text", None)
+
+    if build_memory_json_text is None:
+        def build_memory_json_text(
+            memory_text: str,
+            answers: list[UserAnswer] | None = None,
+            github_context: str = "",
+        ) -> str:
+            memory = UserMemory(raw_notes=memory_text.strip())
+            if answers:
+                memory.qa_memory = [
+                    MemoryFact(
+                        category="guided_qa",
+                        content=f"Question: {answer.question}\nAnswer: {answer.answer}",
+                        evidence=answer.related_jd_requirement,
+                        tags=["qa", "jd-guided"],
+                    )
+                    for answer in answers
+                    if answer.answer.strip()
+                ]
+            if github_context.strip():
+                memory.github_facts = [
+                    MemoryFact(
+                        category="github_public_evidence",
+                        content=github_context[:2000],
+                        evidence="GitHub public data",
+                        tags=["github", "public-evidence"],
+                    )
+                ]
+            return json.dumps(memory.model_dump(), ensure_ascii=False, indent=2)
 
     return {
         "OUTPUT_DIR": OUTPUT_DIR,
