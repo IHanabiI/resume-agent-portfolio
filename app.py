@@ -52,6 +52,8 @@ def init_state() -> None:
         "analysis_state": None,
         "generation_state": None,
         "answers": [],
+        "cumulative_answers": [],
+        "question_round": 1,
         "memory_text": "",
         "github_input": "",
         "github_context": "",
@@ -156,6 +158,8 @@ def render_input_section(modules) -> None:
             )
             st.session_state.generation_state = None
             st.session_state.answers = []
+            st.session_state.cumulative_answers = []
+            st.session_state.question_round = 1
         st.success("分析完成。")
 
 
@@ -187,17 +191,24 @@ def render_analysis_section(modules) -> None:
 
 def render_questions(modules, questions) -> None:
     st.subheader("补充真实信息")
+    st.caption("你可以先回答一轮问题，再点击“继续追问”。Agent 会把回答沉淀到本轮记忆中，并根据岗位要求继续挖掘更具体的信息。信息足够时，也可以直接生成简历。")
     if not questions:
         st.write("当前没有必须追问的问题，可以直接生成定制简历。")
 
     answers = []
     UserAnswer = modules["UserAnswer"]
+    if st.session_state.cumulative_answers:
+        with st.expander("已累计的追问回答", expanded=False):
+            for idx, item in enumerate(st.session_state.cumulative_answers, start=1):
+                st.markdown(f"**{idx}. {item.question}**")
+                st.write(item.answer)
+
     for index, question in enumerate(questions[:5], start=1):
         st.markdown(f"**问题 {index}：{question.question}**")
         st.caption(f"用途：{question.why_needed}；关联 JD 要求：{question.related_jd_requirement}")
         answer = st.text_area(
             f"回答 {index}",
-            key=f"answer_{index}",
+            key=f"answer_{st.session_state.question_round}_{index}",
             placeholder="请填写真实经历；也可以回答：没有 / 不清楚 / 跳过",
             height=100,
         )
@@ -209,19 +220,62 @@ def render_questions(modules, questions) -> None:
             )
         )
 
-    if st.button("生成定制简历", type="primary"):
-        state = dict(st.session_state.analysis_state)
-        state["user_answers"] = answers
-        state["memory_text"] = st.session_state.memory_text
-        state["github_context"] = st.session_state.github_context
-        with st.spinner("正在生成简历并执行事实校验..."):
-            st.session_state.generation_state = modules["run_generation"](state)
-            tailored = st.session_state.generation_state["tailored_resume"]
-            fact_check = st.session_state.generation_state["fact_check"]
-            full_md = modules["build_full_markdown"](tailored, fact_check)
-            modules["save_markdown"](full_md, modules["OUTPUT_DIR"])
-            modules["save_docx"](full_md, modules["OUTPUT_DIR"])
-        st.success("定制简历已生成。")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("继续追问并更新记忆", type="secondary"):
+            accepted_answers = _accepted_answers(answers)
+            if not accepted_answers:
+                st.warning("请至少填写一个有效回答；如果都没有，可以直接点击“立刻生成定制简历”。")
+                return
+            st.session_state.cumulative_answers.extend(accepted_answers)
+            st.session_state.memory_text = _merge_answers_into_memory(
+                st.session_state.memory_text,
+                accepted_answers,
+                st.session_state.question_round,
+            )
+            with st.spinner("正在根据新回答重新分析，并生成下一轮追问..."):
+                st.session_state.analysis_state = modules["run_analysis"](
+                    st.session_state.resume_text,
+                    st.session_state.job_description,
+                    st.session_state.memory_text,
+                    st.session_state.github_context,
+                )
+                st.session_state.question_round += 1
+                st.session_state.generation_state = None
+            st.success("已更新记忆并生成下一轮追问。")
+            st.rerun()
+
+    with col2:
+        if st.button("立刻生成定制简历", type="primary"):
+            all_answers = st.session_state.cumulative_answers + _accepted_answers(answers)
+            state = dict(st.session_state.analysis_state)
+            state["user_answers"] = all_answers
+            state["memory_text"] = st.session_state.memory_text
+            state["github_context"] = st.session_state.github_context
+            with st.spinner("正在生成简历并执行事实校验..."):
+                st.session_state.generation_state = modules["run_generation"](state)
+                tailored = st.session_state.generation_state["tailored_resume"]
+                fact_check = st.session_state.generation_state["fact_check"]
+                full_md = modules["build_full_markdown"](tailored, fact_check)
+                modules["save_markdown"](full_md, modules["OUTPUT_DIR"])
+                modules["save_docx"](full_md, modules["OUTPUT_DIR"])
+            st.success("定制简历已生成。")
+
+
+def _accepted_answers(answers):
+    skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
+    return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _merge_answers_into_memory(memory_text: str, answers, round_number: int) -> str:
+    lines = [memory_text.strip()] if memory_text.strip() else []
+    lines.append(f"\n# 第 {round_number} 轮追问补充")
+    for answer in answers:
+        lines.append(f"- 问题：{answer.question}")
+        lines.append(f"  回答：{answer.answer}")
+        if answer.related_jd_requirement:
+            lines.append(f"  关联岗位要求：{answer.related_jd_requirement}")
+    return "\n".join(lines).strip()
 
 
 def render_generation_section(modules) -> None:
