@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from src.schemas import MemoryFact, UserMemory
+from src.schemas import MemoryFact, UserAnswer, UserMemory
 
 
 def parse_memory_upload(text: str) -> UserMemory:
@@ -26,6 +26,8 @@ def memory_to_text(memory: UserMemory | str) -> str:
     _add_facts(lines, "技能", memory.skills)
     _add_facts(lines, "项目事实", memory.projects)
     _add_facts(lines, "工作事实", memory.work_facts)
+    _add_facts(lines, "追问沉淀", memory.qa_memory)
+    _add_facts(lines, "GitHub 证据", memory.github_facts)
     if memory.preferences:
         lines.append("# 偏好")
         lines.extend(f"- {item}" for item in memory.preferences)
@@ -36,6 +38,35 @@ def memory_to_text(memory: UserMemory | str) -> str:
 
 def memory_to_json_text(memory_text: str) -> str:
     memory = UserMemory(raw_notes=memory_text.strip())
+    return json.dumps(memory.model_dump(), ensure_ascii=False, indent=2)
+
+
+def build_memory_json_text(
+    memory_text: str,
+    answers: list[UserAnswer] | None = None,
+    github_context: str = "",
+) -> str:
+    memory = UserMemory(raw_notes=memory_text.strip())
+    if answers:
+        memory.qa_memory = [
+            MemoryFact(
+                category="追问回答",
+                content=f"问题：{answer.question}\n回答：{answer.answer}",
+                evidence=answer.related_jd_requirement,
+                tags=["qa", "jd-guided"],
+            )
+            for answer in answers
+            if answer.answer.strip()
+        ]
+    if github_context.strip():
+        memory.github_facts = [
+            MemoryFact(
+                category="GitHub 公开证据",
+                content=github_context[:2000],
+                evidence="GitHub public data",
+                tags=["github", "public-evidence"],
+            )
+        ]
     return json.dumps(memory.model_dump(), ensure_ascii=False, indent=2)
 
 

@@ -81,6 +81,8 @@ class UserMemory(BaseModel):
     skills: list[MemoryFact] = Field(default_factory=list)
     projects: list[MemoryFact] = Field(default_factory=list)
     work_facts: list[MemoryFact] = Field(default_factory=list)
+    qa_memory: list[MemoryFact] = Field(default_factory=list)
+    github_facts: list[MemoryFact] = Field(default_factory=list)
     preferences: list[str] = Field(default_factory=list)
     raw_notes: str = ""
 

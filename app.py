@@ -22,7 +22,7 @@ def load_app_modules():
     from src.github_reader import collect_github_context, github_context_to_text
     from src.graph.workflow import run_analysis, run_generation
     from src.llm_client import pretty_json
-    from src.memory_store import memory_to_json_text, memory_to_text, parse_memory_upload
+    from src.memory_store import build_memory_json_text, memory_to_json_text, memory_to_text, parse_memory_upload
     from src.schemas import UserAnswer
 
     return {
@@ -38,6 +38,7 @@ def load_app_modules():
         "run_analysis": run_analysis,
         "run_generation": run_generation,
         "pretty_json": pretty_json,
+        "build_memory_json_text": build_memory_json_text,
         "memory_to_json_text": memory_to_json_text,
         "memory_to_text": memory_to_text,
         "parse_memory_upload": parse_memory_upload,
@@ -247,7 +248,15 @@ def render_questions(modules, questions) -> None:
 
     with col2:
         if st.button("立刻生成定制简历", type="primary"):
-            all_answers = st.session_state.cumulative_answers + _accepted_answers(answers)
+            current_answers = _accepted_answers(answers)
+            if current_answers:
+                st.session_state.cumulative_answers.extend(current_answers)
+                st.session_state.memory_text = _merge_answers_into_memory(
+                    st.session_state.memory_text,
+                    current_answers,
+                    st.session_state.question_round,
+                )
+            all_answers = st.session_state.cumulative_answers
             state = dict(st.session_state.analysis_state)
             state["user_answers"] = all_answers
             state["memory_text"] = st.session_state.memory_text
@@ -353,7 +362,11 @@ def render_context_section(modules) -> None:
         )
         st.download_button(
             "下载记忆库 JSON",
-            data=modules["memory_to_json_text"](st.session_state.memory_text).encode("utf-8"),
+            data=modules["build_memory_json_text"](
+                st.session_state.memory_text,
+                st.session_state.cumulative_answers,
+                st.session_state.github_context,
+            ).encode("utf-8"),
             file_name="user_memory.json",
             mime="application/json",
         )
