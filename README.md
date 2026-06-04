@@ -186,6 +186,16 @@ Main file path: app.py
 
 6. 在 Advanced settings / Secrets 中粘贴：
 
+同时在 Advanced settings 中选择 Python 版本：
+
+```text
+Python version: 3.12
+```
+
+Streamlit Community Cloud 不使用 `runtime.txt` 设置 Python 版本。Python 版本需要在创建 app 时选择；如果 app 已经创建，必须删除后重新部署才能更换 Python 版本。
+
+7. 在 Advanced settings / Secrets 中粘贴：
+
 ```toml
 OPENAI_API_KEY = "你的中转站密钥"
 OPENAI_BASE_URL = "https://www.fluapi.com/v1"
@@ -194,7 +204,7 @@ OPENAI_ENABLE_DEMO_FALLBACK = "true"
 APP_PASSWORD = "Wth147258369"
 ```
 
-7. 点击 Deploy。
+8. 点击 Deploy。
 
 部署完成后会得到一个类似下面的地址：
 
