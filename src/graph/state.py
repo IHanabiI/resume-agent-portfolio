@@ -1,0 +1,18 @@
+from __future__ import annotations
+
+from typing import TypedDict
+
+from src.schemas import CandidateProfile, FactCheckResult, GapAnalysis, JobAnalysis, TailoredResumeResult, UserAnswer
+
+
+class ResumeAgentState(TypedDict, total=False):
+    resume_text: str
+    job_description: str
+    candidate_profile: CandidateProfile
+    job_analysis: JobAnalysis
+    gap_analysis: GapAnalysis
+    user_answers: list[UserAnswer]
+    tailored_resume: TailoredResumeResult
+    fact_check: FactCheckResult
+    needs_questions: bool
+
