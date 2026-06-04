@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-st.set_page_config(page_title="Resume Agent", layout="wide")
+st.set_page_config(page_title="简历定制 Agent", layout="wide")
 
 
 def load_app_modules():
@@ -51,14 +51,14 @@ def init_state() -> None:
 
 
 def main() -> None:
-    st.title("Resume Customization Agent")
-    st.caption("LangGraph workflow for resume parsing, JD analysis, follow-up questions, fact checking, and export.")
+    st.title("简历定制 Agent")
+    st.caption("基于 LangGraph 的简历解析、JD 分析、信息追问、事实校验与文件导出工作流。")
 
     try:
         modules = load_app_modules()
         settings = modules["get_settings"]()
     except Exception:
-        st.error("The app failed during startup.")
+        st.error("应用启动失败。")
         st.code(traceback.format_exc(), language="python")
         return
 
@@ -68,15 +68,15 @@ def main() -> None:
         return
 
     with st.sidebar:
-        st.header("Runtime")
-        st.write(f"Model: `{settings.openai_model}`")
-        st.write(f"Base URL: `{settings.openai_base_url or 'OpenAI default'}`")
-        st.write(f"API key configured: `{bool(settings.openai_api_key)}`")
+        st.header("运行配置")
+        st.write(f"模型：`{settings.openai_model}`")
+        st.write(f"接口地址：`{settings.openai_base_url or 'OpenAI 默认地址'}`")
+        st.write(f"API Key 已配置：`{bool(settings.openai_api_key)}`")
 
     if not settings.openai_api_key and settings.enable_demo_fallback:
-        st.info("OPENAI_API_KEY is not configured. The app will use demo fallback rules.")
+        st.info("当前未配置 OPENAI_API_KEY，应用会使用基础规则兜底，适合演示流程。")
     elif not settings.openai_api_key:
-        st.warning("OPENAI_API_KEY is not configured and demo fallback is disabled.")
+        st.warning("当前未配置 OPENAI_API_KEY，且未启用演示兜底。")
 
     render_input_section(modules)
     if st.session_state.analysis_state:
@@ -90,60 +90,60 @@ def check_access(app_password: str) -> bool:
         return True
     if st.session_state.get("authenticated"):
         with st.sidebar:
-            st.success("Access verified")
-            if st.button("Log out"):
+            st.success("访问验证已通过")
+            if st.button("退出访问"):
                 st.session_state.authenticated = False
                 st.rerun()
         return True
 
-    st.subheader("Access verification")
-    st.write("Enter the project access password.")
-    entered = st.text_input("Access password", type="password")
-    if st.button("Enter project", type="primary"):
+    st.subheader("访问验证")
+    st.write("请输入项目访问密码。")
+    entered = st.text_input("访问密码", type="password")
+    if st.button("进入项目", type="primary"):
         if entered == app_password:
             st.session_state.authenticated = True
             st.rerun()
         else:
-            st.error("Incorrect password.")
+            st.error("访问密码不正确。")
     return False
 
 
 def render_input_section(modules) -> None:
-    st.header("1. Input Materials")
+    st.header("1. 输入材料")
     left, right = st.columns(2)
     with left:
-        uploaded = st.file_uploader("Upload original resume", type=["pdf", "docx", "txt"])
-        pasted_resume = st.text_area("Or paste resume text", height=260, value=st.session_state.resume_text)
+        uploaded = st.file_uploader("上传原始简历", type=["pdf", "docx", "txt"])
+        pasted_resume = st.text_area("或粘贴简历文本", height=260, value=st.session_state.resume_text)
     with right:
-        job_description = st.text_area("Paste target job description", height=330, value=st.session_state.job_description)
+        job_description = st.text_area("粘贴目标岗位 JD", height=330, value=st.session_state.job_description)
 
     if uploaded:
         try:
             st.session_state.resume_text = modules["extract_text_from_upload"](uploaded.name, uploaded.getvalue())
-            st.success(f"Loaded file: {uploaded.name}")
+            st.success(f"已读取文件：{uploaded.name}")
         except Exception as exc:
-            st.error(f"File parsing failed: {exc}")
+            st.error(f"文件解析失败：{exc}")
     elif pasted_resume.strip():
         st.session_state.resume_text = pasted_resume.strip()
 
     if job_description.strip():
         st.session_state.job_description = job_description.strip()
 
-    if st.button("Start analysis", type="primary"):
+    if st.button("开始分析", type="primary"):
         if not st.session_state.resume_text.strip():
-            st.error("Please upload or paste an original resume.")
+            st.error("请上传或粘贴原始简历。")
             return
         if not st.session_state.job_description.strip():
-            st.error("Please enter a target job description.")
+            st.error("请输入目标岗位 JD。")
             return
-        with st.spinner("Running LangGraph analysis workflow..."):
+        with st.spinner("正在执行 LangGraph 分析工作流..."):
             st.session_state.analysis_state = modules["run_analysis"](
                 st.session_state.resume_text,
                 st.session_state.job_description,
             )
             st.session_state.generation_state = None
             st.session_state.answers = []
-        st.success("Analysis completed.")
+        st.success("分析完成。")
 
 
 def render_analysis_section(modules) -> None:
@@ -152,8 +152,8 @@ def render_analysis_section(modules) -> None:
     job = state["job_analysis"]
     gap = state["gap_analysis"]
 
-    st.header("2. Analysis Results")
-    tabs = st.tabs(["Job analysis", "Candidate profile", "Match and gaps", "Follow-up questions"])
+    st.header("2. 分析结果")
+    tabs = st.tabs(["岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
     with tabs[0]:
         st.json(job.model_dump())
     with tabs[1]:
@@ -161,31 +161,31 @@ def render_analysis_section(modules) -> None:
     with tabs[2]:
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Matched strengths")
-            for item in gap.matched_strengths or ["No clear strengths found yet."]:
+            st.subheader("匹配优势")
+            for item in gap.matched_strengths or ["暂未识别到明确匹配优势。"]:
                 st.write(f"- {item}")
         with col2:
-            st.subheader("Missing information")
-            for item in gap.missing_information or ["No obvious gaps found."]:
+            st.subheader("缺失信息")
+            for item in gap.missing_information or ["暂未识别到明显缺口。"]:
                 st.write(f"- {item}")
     with tabs[3]:
         render_questions(modules, gap.questions_to_user)
 
 
 def render_questions(modules, questions) -> None:
-    st.subheader("Supplement real information")
+    st.subheader("补充真实信息")
     if not questions:
-        st.write("No required follow-up questions. You can generate the tailored resume directly.")
+        st.write("当前没有必须追问的问题，可以直接生成定制简历。")
 
     answers = []
     UserAnswer = modules["UserAnswer"]
     for index, question in enumerate(questions[:5], start=1):
-        st.markdown(f"**Question {index}: {question.question}**")
-        st.caption(f"Why needed: {question.why_needed}; Related JD requirement: {question.related_jd_requirement}")
+        st.markdown(f"**问题 {index}：{question.question}**")
+        st.caption(f"用途：{question.why_needed}；关联 JD 要求：{question.related_jd_requirement}")
         answer = st.text_area(
-            f"Answer {index}",
+            f"回答 {index}",
             key=f"answer_{index}",
-            placeholder="Enter real experience, or answer: none / not sure / skip",
+            placeholder="请填写真实经历；也可以回答：没有 / 不清楚 / 跳过",
             height=100,
         )
         answers.append(
@@ -196,17 +196,17 @@ def render_questions(modules, questions) -> None:
             )
         )
 
-    if st.button("Generate tailored resume", type="primary"):
+    if st.button("生成定制简历", type="primary"):
         state = dict(st.session_state.analysis_state)
         state["user_answers"] = answers
-        with st.spinner("Generating resume and running fact check..."):
+        with st.spinner("正在生成简历并执行事实校验..."):
             st.session_state.generation_state = modules["run_generation"](state)
             tailored = st.session_state.generation_state["tailored_resume"]
             fact_check = st.session_state.generation_state["fact_check"]
             full_md = modules["build_full_markdown"](tailored, fact_check)
             modules["save_markdown"](full_md, modules["OUTPUT_DIR"])
             modules["save_docx"](full_md, modules["OUTPUT_DIR"])
-        st.success("Tailored resume generated.")
+        st.success("定制简历已生成。")
 
 
 def render_generation_section(modules) -> None:
@@ -215,21 +215,21 @@ def render_generation_section(modules) -> None:
     fact_check = state["fact_check"]
     full_markdown = modules["build_full_markdown"](tailored, fact_check)
 
-    st.header("3. Generated Result")
-    tabs = st.tabs(["Tailored resume", "Optimization notes", "Evidence map", "Raw JSON"])
+    st.header("3. 生成结果")
+    tabs = st.tabs(["定制简历", "优化说明", "事实来源映射", "原始 JSON"])
     with tabs[0]:
         st.markdown(fact_check.final_resume_markdown or tailored.resume_markdown)
     with tabs[1]:
-        st.subheader("Optimization notes")
+        st.subheader("优化说明")
         for item in tailored.optimization_notes:
             st.write(f"- {item}")
-        st.subheader("Integrated JD keywords")
-        st.write(", ".join(tailored.integrated_keywords) if tailored.integrated_keywords else "None")
-        st.subheader("Still missing information")
-        for item in tailored.still_missing_info or ["None"]:
+        st.subheader("已融入岗位关键词")
+        st.write("、".join(tailored.integrated_keywords) if tailored.integrated_keywords else "无")
+        st.subheader("仍建议补充的信息")
+        for item in tailored.still_missing_info or ["无"]:
             st.write(f"- {item}")
         if fact_check.needs_confirmation:
-            st.subheader("Needs confirmation")
+            st.subheader("待确认内容")
             for item in fact_check.needs_confirmation:
                 st.write(f"- {item}")
     with tabs[2]:
@@ -243,13 +243,13 @@ def render_generation_section(modules) -> None:
         )
 
     st.download_button(
-        "Download Markdown",
+        "下载 Markdown",
         data=full_markdown.encode("utf-8"),
         file_name="tailored_resume.md",
         mime="text/markdown",
     )
     st.download_button(
-        "Download DOCX",
+        "下载 DOCX",
         data=modules["markdown_to_docx_bytes"](full_markdown),
         file_name="tailored_resume.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
