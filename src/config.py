@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,9 +25,31 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     load_dotenv(ROOT_DIR / ".env", override=True, encoding="utf-8-sig")
+    _load_streamlit_secrets()
     return Settings()
 
 
 def load_prompt(name: str) -> str:
     path = PROMPT_DIR / name
     return path.read_text(encoding="utf-8")
+
+
+def _load_streamlit_secrets() -> None:
+    try:
+        import streamlit as st
+    except Exception:
+        return
+
+    try:
+        secrets = st.secrets
+        for key in [
+            "OPENAI_API_KEY",
+            "OPENAI_MODEL",
+            "OPENAI_BASE_URL",
+            "OPENAI_ENABLE_DEMO_FALLBACK",
+            "APP_PASSWORD",
+        ]:
+            if key in secrets:
+                os.environ[key] = str(secrets[key])
+    except Exception:
+        return

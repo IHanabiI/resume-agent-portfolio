@@ -148,9 +148,89 @@ APP_PASSWORD=你设置的访问密码
 
 模型 ID 需要以中转站后台或文档为准。项目会先尝试 Responses API 结构化输出；如果中转站不支持 Responses API，会自动回退到 Chat Completions 的 JSON 输出。
 
-## 部署到 Render
+## 无银行卡部署：Streamlit Community Cloud
+
+如果没有银行卡，推荐使用 Streamlit Community Cloud。它适合 Streamlit 项目，支持从 GitHub 仓库部署，也支持在部署页面填写 Secrets，不需要把 API Key 提交到仓库。
+
+官方文档说明 Community Cloud 可以免费创建、部署和管理 Streamlit app，并且部署时可以在 Secrets 字段粘贴 `secrets.toml` 内容。
+
+### 部署步骤
+
+1. 打开 Streamlit Community Cloud：
+
+```text
+https://share.streamlit.io/
+```
+
+2. 使用 GitHub 登录。
+
+3. 点击：
+
+```text
+Create app
+```
+
+4. 选择：
+
+```text
+Yup, I have an app
+```
+
+5. 填写仓库信息：
+
+```text
+Repository: IHanabiI/resume-agent-portfolio
+Branch: main
+Main file path: app.py
+```
+
+6. 在 Advanced settings / Secrets 中粘贴：
+
+```toml
+OPENAI_API_KEY = "你的中转站密钥"
+OPENAI_BASE_URL = "https://www.fluapi.com/v1"
+OPENAI_MODEL = "gpt-5.5"
+OPENAI_ENABLE_DEMO_FALLBACK = "true"
+APP_PASSWORD = "Wth147258369"
+```
+
+7. 点击 Deploy。
+
+部署完成后会得到一个类似下面的地址：
+
+```text
+https://你的应用名.streamlit.app
+```
+
+访问时输入：
+
+```text
+Wth147258369
+```
+
+即可进入项目。
+
+### Secrets 模板
+
+仓库里提供了模板：
+
+```text
+.streamlit/secrets.example.toml
+```
+
+不要提交真实的：
+
+```text
+.streamlit/secrets.toml
+```
+
+它已经被 `.gitignore` 排除。
+
+## 可选部署：Render
 
 本项目已经包含 `render.yaml`，适合从 GitHub 仓库快速部署到 Render。
+
+注意：如果 Render Workspace 要求绑定银行卡，可以跳过 Render，直接使用上面的 Streamlit Community Cloud 方案。
 
 ### 适合场景
 
