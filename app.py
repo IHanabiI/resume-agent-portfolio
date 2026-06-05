@@ -27,6 +27,7 @@ def load_app_modules():
     from src.schemas import MemoryFact, UserAnswer, UserMemory
 
     parse_memory_upload = memory_store.parse_memory_upload
+    curate_memory_candidates = getattr(memory_store, "curate_memory_candidates", lambda answers=None, github_context="": [])
     memory_to_json_text = memory_store.memory_to_json_text
     memory_to_text = memory_store.memory_to_text
     build_memory_json_text = getattr(memory_store, "build_memory_json_text", None)
@@ -36,6 +37,7 @@ def load_app_modules():
             memory_text: str,
             answers: list[UserAnswer] | None = None,
             github_context: str = "",
+            memory_candidates: list | None = None,
         ) -> str:
             memory = UserMemory(raw_notes=memory_text.strip())
             if answers:
@@ -74,6 +76,7 @@ def load_app_modules():
         "run_generation": run_generation,
         "pretty_json": pretty_json,
         "build_memory_json_text": build_memory_json_text,
+        "curate_memory_candidates": curate_memory_candidates,
         "memory_to_json_text": memory_to_json_text,
         "memory_to_text": memory_to_text,
         "parse_memory_upload": parse_memory_upload,
@@ -93,6 +96,8 @@ def init_state() -> None:
         "memory_text": "",
         "github_input": "",
         "github_context": "",
+        "memory_candidates": [],
+        "session_context_text": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -196,6 +201,7 @@ def render_input_section(modules) -> None:
             st.session_state.answers = []
             st.session_state.cumulative_answers = []
             st.session_state.question_round = 1
+            st.session_state.session_context_text = ""
         st.success("分析完成。")
 
 
@@ -204,14 +210,39 @@ def render_analysis_section(modules) -> None:
     candidate = state["candidate_profile"]
     job = state["job_analysis"]
     gap = state["gap_analysis"]
+    sufficiency = state.get("sufficiency_report")
 
     st.header("2. 分析结果")
-    tabs = st.tabs(["岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
+    tabs = st.tabs(["信息足够度", "岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
     with tabs[0]:
-        st.json(job.model_dump())
+        if sufficiency:
+            st.metric("当前信息足够度", f"{sufficiency.score}%")
+            st.write(sufficiency.summary)
+            if sufficiency.ready_to_generate:
+                st.success("当前信息已经可以生成一版定制简历。")
+            else:
+                st.warning("建议先继续补充信息，再生成正式简历。")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("已有证据")
+                for item in sufficiency.enough_evidence or ["暂无明确证据。"]:
+                    st.write(f"- {item}")
+            with col2:
+                st.subheader("建议补充")
+                for item in sufficiency.missing_evidence or ["暂无明显缺口。"]:
+                    st.write(f"- {item}")
+
+            st.subheader("下一步建议追问")
+            for item in sufficiency.recommended_questions or ["可以直接生成简历。"]:
+                st.write(f"- {item}")
+        else:
+            st.info("尚未生成信息足够度评估。")
     with tabs[1]:
-        st.json(candidate.model_dump())
+        st.json(job.model_dump())
     with tabs[2]:
+        st.json(candidate.model_dump())
+    with tabs[3]:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("匹配优势")
@@ -221,7 +252,7 @@ def render_analysis_section(modules) -> None:
             st.subheader("缺失信息")
             for item in gap.missing_information or ["暂未识别到明显缺口。"]:
                 st.write(f"- {item}")
-    with tabs[3]:
+    with tabs[4]:
         render_questions(modules, gap.questions_to_user)
 
 
@@ -256,6 +287,22 @@ def render_questions(modules, questions) -> None:
             )
         )
 
+    accepted_preview = _accepted_answers(answers)
+    memory_candidates = modules["curate_memory_candidates"](accepted_preview, st.session_state.github_context)
+    selected_memory_candidates = []
+    if memory_candidates:
+        with st.expander("本轮准备保存到个人记忆库的事实", expanded=True):
+            st.caption("勾选后，这些内容会进入导出的 user_memory.json；不勾选也不影响本次简历生成。")
+            for idx, candidate in enumerate(memory_candidates, start=1):
+                checked = st.checkbox(
+                    f"{candidate.category}：{candidate.content[:120]}",
+                    value=candidate.save_by_default,
+                    key=f"memory_candidate_{st.session_state.question_round}_{idx}",
+                )
+                st.caption(f"来源：{candidate.source_type}；证据：{candidate.evidence or '用户确认'}")
+                if checked:
+                    selected_memory_candidates.append(candidate)
+
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("继续追问并更新记忆", type="secondary"):
@@ -264,16 +311,22 @@ def render_questions(modules, questions) -> None:
                 st.warning("请至少填写一个有效回答；如果都没有，可以直接点击“立刻生成定制简历”。")
                 return
             st.session_state.cumulative_answers.extend(accepted_answers)
-            st.session_state.memory_text = _merge_answers_into_memory(
-                st.session_state.memory_text,
+            st.session_state.session_context_text = _merge_answers_into_memory(
+                st.session_state.session_context_text,
                 accepted_answers,
+                st.session_state.question_round,
+            )
+            st.session_state.memory_candidates.extend(selected_memory_candidates)
+            st.session_state.memory_text = _merge_memory_candidates_into_text(
+                st.session_state.memory_text,
+                selected_memory_candidates,
                 st.session_state.question_round,
             )
             with st.spinner("正在根据新回答重新分析，并生成下一轮追问..."):
                 st.session_state.analysis_state = modules["run_analysis"](
                     st.session_state.resume_text,
                     st.session_state.job_description,
-                    st.session_state.memory_text,
+                    _combined_memory_context(),
                     st.session_state.github_context,
                 )
                 st.session_state.question_round += 1
@@ -286,15 +339,21 @@ def render_questions(modules, questions) -> None:
             current_answers = _accepted_answers(answers)
             if current_answers:
                 st.session_state.cumulative_answers.extend(current_answers)
-                st.session_state.memory_text = _merge_answers_into_memory(
-                    st.session_state.memory_text,
+                st.session_state.session_context_text = _merge_answers_into_memory(
+                    st.session_state.session_context_text,
                     current_answers,
+                    st.session_state.question_round,
+                )
+                st.session_state.memory_candidates.extend(selected_memory_candidates)
+                st.session_state.memory_text = _merge_memory_candidates_into_text(
+                    st.session_state.memory_text,
+                    selected_memory_candidates,
                     st.session_state.question_round,
                 )
             all_answers = st.session_state.cumulative_answers
             state = dict(st.session_state.analysis_state)
             state["user_answers"] = all_answers
-            state["memory_text"] = st.session_state.memory_text
+            state["memory_text"] = _combined_memory_context()
             state["github_context"] = st.session_state.github_context
             with st.spinner("正在生成简历并执行事实校验..."):
                 st.session_state.generation_state = modules["run_generation"](state)
@@ -311,6 +370,14 @@ def _accepted_answers(answers):
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
 
 
+def _combined_memory_context() -> str:
+    parts = [
+        st.session_state.memory_text.strip(),
+        st.session_state.session_context_text.strip(),
+    ]
+    return "\n\n".join(part for part in parts if part)
+
+
 def _merge_answers_into_memory(memory_text: str, answers, round_number: int) -> str:
     lines = [memory_text.strip()] if memory_text.strip() else []
     lines.append(f"\n# 第 {round_number} 轮追问补充")
@@ -319,6 +386,21 @@ def _merge_answers_into_memory(memory_text: str, answers, round_number: int) -> 
         lines.append(f"  回答：{answer.answer}")
         if answer.related_jd_requirement:
             lines.append(f"  关联岗位要求：{answer.related_jd_requirement}")
+    return "\n".join(lines).strip()
+
+
+def _merge_memory_candidates_into_text(memory_text: str, candidates, round_number: int) -> str:
+    if not candidates:
+        return memory_text.strip()
+    lines = [memory_text.strip()] if memory_text.strip() else []
+    lines.append(f"\n# 第 {round_number} 轮已确认记忆事实")
+    for candidate in candidates:
+        lines.append(f"- 分类：{candidate.category}")
+        lines.append(f"  内容：{candidate.content}")
+        if candidate.evidence:
+            lines.append(f"  证据：{candidate.evidence}")
+        if candidate.tags:
+            lines.append(f"  标签：{', '.join(candidate.tags)}")
     return "\n".join(lines).strip()
 
 
@@ -401,6 +483,8 @@ def render_context_section(modules) -> None:
                 st.session_state.memory_text,
                 st.session_state.cumulative_answers,
                 st.session_state.github_context,
+                st.session_state.memory_candidates
+                + modules["curate_memory_candidates"]([], st.session_state.github_context),
             ).encode("utf-8"),
             file_name="user_memory.json",
             mime="application/json",
@@ -424,6 +508,11 @@ def render_context_section(modules) -> None:
 
         if st.session_state.github_context:
             st.text_area("已收集到的 GitHub 证据", value=st.session_state.github_context, height=220)
+            github_candidates = modules["curate_memory_candidates"]([], st.session_state.github_context)
+            if github_candidates:
+                with st.expander("GitHub 将沉淀为这些记忆事实", expanded=False):
+                    for candidate in github_candidates:
+                        st.write(f"- **{candidate.category}**：{candidate.content[:180]}")
             st.download_button(
                 "下载 GitHub 证据 TXT",
                 data=st.session_state.github_context.encode("utf-8"),

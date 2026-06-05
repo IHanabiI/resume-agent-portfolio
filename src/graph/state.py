@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from src.schemas import CandidateProfile, FactCheckResult, GapAnalysis, JobAnalysis, TailoredResumeResult, UserAnswer
+from src.schemas import (
+    CandidateProfile,
+    FactCheckResult,
+    GapAnalysis,
+    InformationSufficiencyReport,
+    JobAnalysis,
+    TailoredResumeResult,
+    UserAnswer,
+)
 
 
 class ResumeAgentState(TypedDict, total=False):
@@ -13,6 +21,7 @@ class ResumeAgentState(TypedDict, total=False):
     candidate_profile: CandidateProfile
     job_analysis: JobAnalysis
     gap_analysis: GapAnalysis
+    sufficiency_report: InformationSufficiencyReport
     user_answers: list[UserAnswer]
     tailored_resume: TailoredResumeResult
     fact_check: FactCheckResult

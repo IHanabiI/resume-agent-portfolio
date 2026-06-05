@@ -8,6 +8,7 @@ from src.graph.nodes import (
     match_gap_node,
     parse_resume_node,
     question_node,
+    sufficiency_node,
     write_resume_node,
 )
 from src.graph.state import ResumeAgentState
@@ -19,6 +20,7 @@ def build_analysis_graph():
     graph.add_node("analyze_jd", analyze_jd_node)
     graph.add_node("match_gap", match_gap_node)
     graph.add_node("generate_questions", question_node)
+    graph.add_node("assess_sufficiency", sufficiency_node)
 
     graph.set_entry_point("parse_resume")
     graph.add_edge("parse_resume", "analyze_jd")
@@ -26,9 +28,10 @@ def build_analysis_graph():
     graph.add_conditional_edges(
         "match_gap",
         lambda state: "ask" if state.get("needs_questions") else "ready",
-        {"ask": "generate_questions", "ready": END},
+        {"ask": "generate_questions", "ready": "assess_sufficiency"},
     )
-    graph.add_edge("generate_questions", END)
+    graph.add_edge("generate_questions", "assess_sufficiency")
+    graph.add_edge("assess_sufficiency", END)
     return graph.compile()
 
 

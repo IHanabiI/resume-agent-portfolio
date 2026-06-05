@@ -68,6 +68,16 @@ class UserAnswer(BaseModel):
     related_jd_requirement: str = ""
 
 
+class InformationSufficiencyReport(BaseModel):
+    score: int = Field(default=0, ge=0, le=100)
+    status: Literal["insufficient", "usable", "strong"] = "insufficient"
+    ready_to_generate: bool = False
+    summary: str = ""
+    enough_evidence: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    recommended_questions: list[str] = Field(default_factory=list)
+
+
 class MemoryFact(BaseModel):
     category: str = ""
     content: str = ""
@@ -75,14 +85,26 @@ class MemoryFact(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class MemoryCandidate(BaseModel):
+    category: Literal["strength", "skill", "project", "work_fact", "preference", "do_not_claim", "qa"] = "qa"
+    content: str = ""
+    evidence: str = ""
+    tags: list[str] = Field(default_factory=list)
+    source_type: Literal["user_answer", "github", "manual"] = "user_answer"
+    save_by_default: bool = True
+
+
 class UserMemory(BaseModel):
     profile_summary: str = ""
+    target_roles: list[str] = Field(default_factory=list)
+    strongest_selling_points: list[MemoryFact] = Field(default_factory=list)
     strengths: list[MemoryFact] = Field(default_factory=list)
     skills: list[MemoryFact] = Field(default_factory=list)
     projects: list[MemoryFact] = Field(default_factory=list)
     work_facts: list[MemoryFact] = Field(default_factory=list)
     qa_memory: list[MemoryFact] = Field(default_factory=list)
     github_facts: list[MemoryFact] = Field(default_factory=list)
+    do_not_claim: list[MemoryFact] = Field(default_factory=list)
     preferences: list[str] = Field(default_factory=list)
     raw_notes: str = ""
 

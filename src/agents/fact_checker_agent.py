@@ -74,10 +74,12 @@ def _fallback_fact_check(
                 )
             )
 
+    final_markdown = _remove_unverified_lines(result.resume_markdown, needs_confirmation)
+
     return FactCheckResult(
-        final_resume_markdown=result.resume_markdown,
+        final_resume_markdown=final_markdown,
         evidence_map=evidence,
-        removed_claims=[],
+        removed_claims=needs_confirmation[:20],
         needs_confirmation=needs_confirmation[:20],
     )
 
@@ -96,3 +98,46 @@ def _find_source(claim: str, sources: list[tuple[str, str]]) -> tuple[str, str]:
         if tokens and sum(1 for token in tokens if token in normalized_source) >= max(1, min(3, len(tokens))):
             return source_type, source
     return "none", ""
+
+
+def _remove_unverified_lines(markdown: str, claims: list[str]) -> str:
+    if not claims:
+        return markdown
+    claim_tokens = [_important_tokens(claim) for claim in claims]
+    kept: list[str] = []
+    removed_section_added = False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("- ") and _line_matches_claim(line, claim_tokens):
+            continue
+        kept.append(line)
+    if claims:
+        kept.extend(["", "## 待确认信息"])
+        removed_section_added = True
+        for claim in claims[:20]:
+            kept.append(f"- {claim}")
+    if removed_section_added:
+        kept.append("")
+        kept.append("> 上述内容缺少可验证来源，未写入正式简历正文。")
+    return "\n".join(kept).strip()
+
+
+def _line_matches_claim(line: str, claim_tokens: list[list[str]]) -> bool:
+    normalized = line.lower()
+    for tokens in claim_tokens:
+        if tokens and sum(1 for token in tokens if token in normalized) >= max(1, min(3, len(tokens))):
+            return True
+    return False
+
+
+def _important_tokens(text: str) -> list[str]:
+    normalized = (
+        text.lower()
+        .replace("：", " ")
+        .replace("，", " ")
+        .replace("、", " ")
+        .replace("。", " ")
+        .replace("；", " ")
+        .replace(":", " ")
+        .replace(",", " ")
+    )
+    return [token for token in normalized.split() if len(token) >= 2][:12]

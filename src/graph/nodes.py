@@ -6,6 +6,7 @@ from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
 from src.agents.resume_parser_agent import parse_resume
 from src.agents.resume_writer_agent import write_resume
+from src.agents.sufficiency_agent import assess_information_sufficiency
 from src.graph.state import ResumeAgentState
 from src.llm_client import LLMClient
 
@@ -37,6 +38,19 @@ def question_node(state: ResumeAgentState) -> ResumeAgentState:
     llm = LLMClient()
     refined = refine_questions(state["gap_analysis"], llm)
     return {"gap_analysis": refined, "needs_questions": bool(refined.questions_to_user)}
+
+
+def sufficiency_node(state: ResumeAgentState) -> ResumeAgentState:
+    report = assess_information_sufficiency(
+        state["candidate_profile"],
+        state["job_analysis"],
+        state["gap_analysis"],
+        state["resume_text"],
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
+        state.get("user_answers", []),
+    )
+    return {"sufficiency_report": report}
 
 
 def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:

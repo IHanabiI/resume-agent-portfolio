@@ -13,11 +13,14 @@
 - 支持个人记忆库，用于补充原始简历没有写出的真实经历、技能、项目事实和表达偏好。
 - 支持读取 GitHub 公开信息，提取公开仓库、语言、主题、README 摘要等可用证据。
 - 对比 JD 与简历，输出匹配优势和缺失信息。
+- 输出信息足够度评分，提示当前材料是否足以生成有竞争力的定制简历。
 - 根据缺口生成最多 5 个具体追问问题。
 - 支持多轮追问：用户回答后可继续追问，回答会沉淀到本轮记忆中，直到信息足够或用户选择立即生成。
+- 支持记忆候选确认：用户可以选择哪些追问回答和 GitHub 证据进入长期记忆 JSON。
 - 支持用户回答“没有 / 不清楚 / 跳过”，避免诱导编造经历。
 - 基于原始简历和用户补充信息生成定制化简历。
 - 使用 Fact Checker Agent 检查关键内容来源。
+- 在规则兜底模式下也会把缺少证据的内容移出正式简历正文，放入待确认信息。
 - 输出事实来源映射表 evidence map。
 - 支持下载 Markdown 和 DOCX。
 - 未配置 OpenAI API Key 时提供基础规则兜底，方便演示流程。
@@ -44,8 +47,10 @@
 | JD Analyzer Agent | 分析岗位 JD，提取职责、技能、关键词和招聘方关注点 |
 | Match & Gap Agent | 对比简历、个人记忆、GitHub 证据与 JD，识别匹配优势和缺失信息 |
 | Question Agent | 根据缺口生成具体追问问题 |
+| Sufficiency Agent | 评估当前事实来源是否足够支撑定制简历生成 |
+| Memory Curator | 将用户追问回答和 GitHub 证据整理为可复用的个人记忆事实 |
 | Resume Writer Agent | 基于原始简历和用户补充信息生成定制简历 |
-| Fact Checker Agent | 校验最终简历中的关键内容是否有来源 |
+| Fact Checker Agent | 校验最终简历中的关键内容是否有来源，并拦截无证据内容 |
 | Export Agent | 导出 Markdown 和 DOCX |
 
 LangGraph 负责编排状态流转，Streamlit 负责用户界面和 human-in-the-loop 输入。
