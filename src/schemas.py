@@ -69,6 +69,13 @@ class JobPosting(BaseModel):
     fit_matched_points: list[str] = Field(default_factory=list)
     suggested_resume_angle: str = ""
     last_resume_file: str = ""
+    package_generated_at: str = ""
+    package_resume_markdown: str = ""
+    package_opener_markdown: str = ""
+    package_changelog_markdown: str = ""
+    package_needs_confirmation: list[str] = Field(default_factory=list)
+    package_placeholders: list[str] = Field(default_factory=list)
+    package_evidence_map: list[dict] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 

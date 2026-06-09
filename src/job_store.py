@@ -87,6 +87,35 @@ def update_job_status(
     return workspace
 
 
+def update_job_package(
+    workspace: JobWorkspace,
+    job_id: str,
+    resume_markdown: str,
+    opener_markdown: str,
+    changelog_markdown: str,
+    needs_confirmation: list[str] | None = None,
+    placeholders: list[str] | None = None,
+    evidence_map: list[dict] | None = None,
+    last_resume_file: str = "tailored_resume.docx",
+) -> JobWorkspace:
+    for job in workspace.jobs:
+        if job.job_id != job_id:
+            continue
+        job.status = "已生成简历"
+        job.package_generated_at = _now()
+        job.package_resume_markdown = resume_markdown
+        job.package_opener_markdown = opener_markdown
+        job.package_changelog_markdown = changelog_markdown
+        job.package_needs_confirmation = needs_confirmation or []
+        job.package_placeholders = placeholders or []
+        job.package_evidence_map = evidence_map or []
+        job.last_resume_file = last_resume_file
+        job.updated_at = _now()
+        workspace.active_job_id = job.job_id
+        break
+    return workspace
+
+
 def get_active_job(workspace: JobWorkspace) -> JobPosting | None:
     if workspace.active_job_id:
         for job in workspace.jobs:
@@ -136,6 +165,7 @@ def shortlist_to_json_text(workspace: JobWorkspace) -> str:
             "recommendation": job.fit_recommendation,
             "risks": job.fit_risks,
             "suggested_resume_angle": job.suggested_resume_angle,
+            "package_generated_at": job.package_generated_at,
             "notes": job.notes,
             "last_resume_file": job.last_resume_file,
             "updated_at": job.updated_at,

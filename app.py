@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -31,6 +32,7 @@ def load_app_modules():
         parse_job_workspace_upload,
         ranked_jobs,
         shortlist_to_json_text,
+        update_job_package,
         update_job_status,
         upsert_job,
     )
@@ -107,6 +109,7 @@ def load_app_modules():
         "parse_job_workspace_upload": parse_job_workspace_upload,
         "ranked_jobs": ranked_jobs,
         "shortlist_to_json_text": shortlist_to_json_text,
+        "update_job_package": update_job_package,
         "update_job_status": update_job_status,
         "upsert_job": upsert_job,
         "run_analysis": run_analysis,
@@ -383,7 +386,7 @@ def render_job_workspace_section(modules) -> None:
         st.session_state.job_workspace = workspace
         active_job = modules["get_active_job"](workspace)
         if active_job:
-            _load_job_into_session(active_job)
+            _load_job_into_session(active_job, modules)
         _auto_save_workspace(modules, modules["get_settings"]())
         st.success("已导入岗位库。")
 
@@ -406,7 +409,7 @@ def render_job_workspace_section(modules) -> None:
             if st.button("加载选中岗位到 JD 输入区"):
                 selected = _find_job(workspace, selected_id)
                 if selected:
-                    _load_job_into_session(selected)
+                    _load_job_into_session(selected, modules)
                     st.success("已加载岗位。")
                     st.rerun()
         with col_delete:
@@ -463,6 +466,7 @@ def render_job_workspace_section(modules) -> None:
                 "岗位": job.title,
                 "状态": job.status,
                 "匹配度": f"{job.match_score}%" if job.match_score else "",
+                "交付包": "已生成" if job.package_resume_markdown else "",
                 "平台": job.platform,
                 "地点": job.location,
                 "薪资": job.salary,
@@ -754,6 +758,27 @@ def render_questions(modules, questions) -> None:
                         fit_matched_points=fit.matched_points if fit else None,
                         suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
+                    package_resume = fact_check.final_resume_markdown or tailored.resume_markdown
+                    placeholders = _extract_placeholders(
+                        "\n\n".join(
+                            [
+                                package_resume,
+                                tailored.opener_markdown,
+                                tailored.changelog_markdown,
+                            ]
+                        )
+                    )
+                    st.session_state.job_workspace = modules["update_job_package"](
+                        st.session_state.job_workspace,
+                        st.session_state.active_job_id,
+                        package_resume,
+                        tailored.opener_markdown,
+                        tailored.changelog_markdown,
+                        fact_check.needs_confirmation,
+                        list(dict.fromkeys(placeholders + tailored.still_missing_info)),
+                        [item.model_dump() for item in fact_check.evidence_map],
+                        "tailored_resume.docx",
+                    )
                 _auto_save_workspace(modules, modules["get_settings"]())
             st.success("岗位交付材料已生成。")
 
@@ -793,6 +818,11 @@ def render_questions(modules, questions) -> None:
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _extract_placeholders(text: str) -> list[str]:
+    matches = re.findall(r"\[(请填写|需用户确认)[:：]([^\]]+)\]", text or "")
+    return [f"{kind}：{content.strip()}" for kind, content in matches if content.strip()]
 
 
 def _build_workspace_snapshot(modules):
@@ -900,7 +930,7 @@ def _find_job(workspace, job_id: str):
     return None
 
 
-def _load_job_into_session(job) -> None:
+def _load_job_into_session(job, modules=None) -> None:
     st.session_state.active_job_id = job.job_id
     st.session_state.job_workspace.active_job_id = job.job_id
     st.session_state.job_company = job.company
@@ -910,10 +940,31 @@ def _load_job_into_session(job) -> None:
     st.session_state.job_status = job.status
     st.session_state.job_description = job.jd_text
     st.session_state.analysis_state = None
-    st.session_state.generation_state = None
+    st.session_state.generation_state = _job_package_to_generation_state(job, modules) if modules else None
     st.session_state.cumulative_answers = []
     st.session_state.session_context_text = ""
     st.session_state.question_round = 1
+
+
+def _job_package_to_generation_state(job, modules):
+    if not modules or not job.package_resume_markdown:
+        return None
+    TailoredResumeResult = modules["TailoredResumeResult"]
+    FactCheckResult = modules["FactCheckResult"]
+    return {
+        "tailored_resume": TailoredResumeResult(
+            resume_markdown=job.package_resume_markdown,
+            opener_markdown=job.package_opener_markdown,
+            changelog_markdown=job.package_changelog_markdown,
+            still_missing_info=job.package_placeholders,
+            evidence_map=job.package_evidence_map,
+        ),
+        "fact_check": FactCheckResult(
+            final_resume_markdown=job.package_resume_markdown,
+            evidence_map=job.package_evidence_map,
+            needs_confirmation=job.package_needs_confirmation,
+        ),
+    }
 
 
 def _save_current_job(modules) -> None:
@@ -1021,6 +1072,7 @@ def render_shortlist_section(modules) -> None:
             "公司": job.company or "未填写公司",
             "岗位": job.title or "未命名岗位",
             "状态": job.status,
+            "交付包": "已生成" if job.package_resume_markdown else "",
             "平台": job.platform,
             "地点": job.location,
             "薪资": job.salary,
@@ -1043,7 +1095,7 @@ def render_shortlist_section(modules) -> None:
         if st.button("加载该岗位继续处理", key="load_shortlist_job"):
             selected = _find_job(workspace, selected_id)
             if selected:
-                _load_job_into_session(selected)
+                _load_job_into_session(selected, modules)
                 st.success("已加载岗位。")
                 st.rerun()
 
@@ -1061,6 +1113,9 @@ def render_shortlist_section(modules) -> None:
             st.write(f"**公司**：{selected.company or '未填写'}")
             st.write(f"**岗位**：{selected.title or '未命名岗位'}")
             st.write(f"**匹配度**：{selected.match_score}%")
+            st.write(f"**交付包**：{'已生成' if selected.package_resume_markdown else '尚未生成'}")
+            if selected.package_generated_at:
+                st.write(f"**生成时间**：{selected.package_generated_at}")
             st.write(f"**建议**：{selected.fit_recommendation or '尚未分析'}")
             st.write(f"**简历切入角度**：{selected.suggested_resume_angle or '尚未分析'}")
             if selected.fit_matched_points:
@@ -1080,7 +1135,8 @@ def _short_job_label(jobs, job_id: str) -> str:
     for job in jobs:
         if job.job_id == job_id:
             score = f"{job.match_score}%" if job.match_score else "未分析"
-            return f"{score} | {job.company or '未填写公司'} - {job.title or '未命名岗位'}"
+            package = " | 已生成" if job.package_resume_markdown else ""
+            return f"{score}{package} | {job.company or '未填写公司'} - {job.title or '未命名岗位'}"
     return job_id
 
 
