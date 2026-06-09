@@ -16,6 +16,8 @@ COMMON_SKILLS = [
 
 def analyze_jd(job_description: str, llm: LLMClient | None = None) -> JobAnalysis:
     llm = llm or LLMClient()
+    if llm.settings.fast_analysis_mode:
+        return _fallback_analyze_jd(job_description)
     prompt = load_prompt("jd_analyzer_prompt.md")
     result = llm.generate_structured(
         "你是岗位 JD 分析 Agent，只根据 JD 文本提取岗位要求。",

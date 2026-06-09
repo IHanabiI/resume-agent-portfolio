@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     openai_base_url: str = Field(default="", alias="OPENAI_BASE_URL")
     enable_demo_fallback: bool = Field(default=True, alias="OPENAI_ENABLE_DEMO_FALLBACK")
     app_password: str = Field(default="", alias="APP_PASSWORD")
+    openai_timeout_seconds: float = Field(default=45.0, alias="OPENAI_TIMEOUT_SECONDS")
+    fast_analysis_mode: bool = Field(default=True, alias="RESUME_AGENT_FAST_ANALYSIS")
 
 
 @lru_cache
@@ -48,6 +50,8 @@ def _load_streamlit_secrets() -> None:
             "OPENAI_BASE_URL",
             "OPENAI_ENABLE_DEMO_FALLBACK",
             "APP_PASSWORD",
+            "OPENAI_TIMEOUT_SECONDS",
+            "RESUME_AGENT_FAST_ANALYSIS",
         ]:
             if key in secrets:
                 os.environ[key] = str(secrets[key])

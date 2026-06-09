@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import TypeVar
 
 from openai import OpenAI
@@ -15,8 +16,16 @@ T = TypeVar("T", bound=BaseModel)
 class LLMClient:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self._prefer_chat_api = bool(
+            self.settings.openai_base_url
+            and "api.openai.com" not in self.settings.openai_base_url.lower()
+        )
         if self.settings.openai_api_key:
-            kwargs = {"api_key": self.settings.openai_api_key}
+            kwargs = {
+                "api_key": self.settings.openai_api_key,
+                "timeout": self.settings.openai_timeout_seconds,
+                "max_retries": 0,
+            }
             if self.settings.openai_base_url:
                 kwargs["base_url"] = self.settings.openai_base_url.rstrip("/")
             self._client = OpenAI(**kwargs)
@@ -30,6 +39,14 @@ class LLMClient:
     def generate_structured(self, system_prompt: str, user_prompt: str, schema: type[T]) -> T | None:
         if not self._client:
             return None
+
+        if self._prefer_chat_api:
+            try:
+                return self._generate_structured_via_chat(system_prompt, user_prompt, schema)
+            except Exception as chat_exc:
+                if not self.settings.enable_demo_fallback:
+                    raise RuntimeError(f"LLM structured chat output failed: {chat_exc}") from chat_exc
+                return None
 
         try:
             response = self._client.responses.parse(
@@ -59,16 +76,7 @@ class LLMClient:
                 raise ValueError("Chat parse returned no parsed output.")
             except Exception:
                 try:
-                    content = self._chat_completion_text(
-                        system_prompt=(
-                            f"{system_prompt}\n\n"
-                            f"你必须只输出一个 JSON 对象，且字段必须符合这个 Pydantic schema："
-                            f"{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
-                        ),
-                        user_prompt=user_prompt,
-                        json_mode=True,
-                    )
-                    return schema.model_validate_json(content)
+                    return self._generate_structured_via_chat(system_prompt, user_prompt, schema)
                 except Exception as chat_exc:
                     if not self.settings.enable_demo_fallback:
                         raise RuntimeError(
@@ -80,6 +88,13 @@ class LLMClient:
     def generate_text(self, system_prompt: str, user_prompt: str) -> str | None:
         if not self._client:
             return None
+        if self._prefer_chat_api:
+            try:
+                return self._chat_completion_text(system_prompt, user_prompt)
+            except Exception as chat_exc:
+                if not self.settings.enable_demo_fallback:
+                    raise RuntimeError(f"LLM chat text generation failed: {chat_exc}") from chat_exc
+                return None
         try:
             response = self._client.responses.create(
                 model=self.settings.openai_model,
@@ -101,6 +116,18 @@ class LLMClient:
                     ) from chat_exc
                 return None
 
+    def _generate_structured_via_chat(self, system_prompt: str, user_prompt: str, schema: type[T]) -> T:
+        content = self._chat_completion_text(
+            system_prompt=(
+                f"{system_prompt}\n\n"
+                f"你必须只输出一个 JSON 对象，且字段必须符合这个 Pydantic schema："
+                f"{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
+            ),
+            user_prompt=user_prompt,
+            json_mode=True,
+        )
+        return schema.model_validate_json(_extract_json_object(content))
+
     def _chat_completion_text(self, system_prompt: str, user_prompt: str, json_mode: bool = False) -> str:
         kwargs = {
             "model": self.settings.openai_model,
@@ -109,6 +136,8 @@ class LLMClient:
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if self._prefer_chat_api:
+            return self._stream_chat_completion_text(kwargs)
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
@@ -124,24 +153,34 @@ class LLMClient:
                 return content
             raise ValueError("Chat completion returned empty content.")
         except Exception:
-            stream = self._client.chat.completions.create(**kwargs, stream=True)
-            parts: list[str] = []
-            for chunk in stream:
-                if not getattr(chunk, "choices", None):
-                    continue
-                delta = getattr(chunk.choices[0], "delta", None)
-                content = getattr(delta, "content", "") if delta else ""
-                if content:
-                    parts.append(content)
-            text = "".join(parts).strip()
-            if not text:
-                raise ValueError("Streaming chat completion returned empty content.")
-            return text
+            if json_mode:
+                kwargs.pop("response_format", None)
+            return self._stream_chat_completion_text(kwargs)
+
+    def _stream_chat_completion_text(self, kwargs: dict) -> str:
+        stream = self._client.chat.completions.create(**kwargs, stream=True)
+        parts: list[str] = []
+        for chunk in stream:
+            if not getattr(chunk, "choices", None):
+                continue
+            delta = getattr(chunk.choices[0], "delta", None)
+            content = getattr(delta, "content", "") if delta else ""
+            if content:
+                parts.append(content)
+        text = "".join(parts).strip()
+        if not text:
+            raise ValueError("Streaming chat completion returned empty content.")
+        return text
 
 
 def pretty_json(model: BaseModel | dict) -> str:
     data = model.model_dump() if isinstance(model, BaseModel) else model
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@lru_cache
+def get_llm_client() -> LLMClient:
+    return LLMClient()
 
 
 def _extract_sse_text(raw: str) -> str:
@@ -163,3 +202,16 @@ def _extract_sse_text(raw: str) -> str:
             if content:
                 parts.append(content)
     return "".join(parts).strip()
+
+
+def _extract_json_object(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`").strip()
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:].strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return stripped[start : end + 1]
+    return stripped

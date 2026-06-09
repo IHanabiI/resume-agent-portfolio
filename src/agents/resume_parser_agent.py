@@ -9,6 +9,8 @@ from src.schemas import CandidateProfile, EvidenceSnippet, ProjectExperience, Wo
 
 def parse_resume(resume_text: str, llm: LLMClient | None = None) -> CandidateProfile:
     llm = llm or LLMClient()
+    if llm.settings.fast_analysis_mode:
+        return _fallback_parse_resume(resume_text)
     prompt = load_prompt("resume_parser_prompt.md")
     result = llm.generate_structured(
         "你是严格的简历解析 Agent，只提取原文中存在的信息，不做推测。",
@@ -81,4 +83,3 @@ def _collect_after_headers(lines: list[str], headers: list[str], stop_headers: l
 def _split_keywords(text: str) -> list[str]:
     parts = re.split(r"[,，、/|；;\s]+", text)
     return sorted({p.strip("：:()（）") for p in parts if 1 < len(p.strip()) <= 30})
-

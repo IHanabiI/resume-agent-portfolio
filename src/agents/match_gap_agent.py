@@ -14,8 +14,10 @@ def analyze_match_and_gap(
     llm: LLMClient | None = None,
 ) -> GapAnalysis:
     llm = llm or LLMClient()
-    prompt = load_prompt("match_gap_prompt.md")
     context = _build_context(resume_text, memory_text, github_context)
+    if llm.settings.fast_analysis_mode:
+        return _fallback_gap(candidate, job, context)
+    prompt = load_prompt("match_gap_prompt.md")
     result = llm.generate_structured(
         "你是匹配与缺口分析 Agent。不得把 JD 要求当成候选人已经具备的事实；只把原始简历、个人记忆库、GitHub 公开证据、用户回答中有来源的信息视为事实。",
         (

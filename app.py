@@ -183,6 +183,8 @@ def render_input_section(modules) -> None:
     if job_description.strip():
         st.session_state.job_description = job_description.strip()
 
+    st.caption("点击“开始分析”后，结果会显示在本区域下方的「2. 分析结果」。如果需要最终简历，请在追问页点击「立刻生成定制简历」。")
+
     if st.button("开始分析", type="primary"):
         if not st.session_state.resume_text.strip():
             st.error("请上传或粘贴原始简历。")
@@ -190,18 +192,23 @@ def render_input_section(modules) -> None:
         if not st.session_state.job_description.strip():
             st.error("请输入目标岗位 JD。")
             return
-        with st.spinner("正在执行 LangGraph 分析工作流..."):
-            st.session_state.analysis_state = modules["run_analysis"](
-                st.session_state.resume_text,
-                st.session_state.job_description,
-                st.session_state.memory_text,
-                st.session_state.github_context,
-            )
-            st.session_state.generation_state = None
-            st.session_state.answers = []
-            st.session_state.cumulative_answers = []
-            st.session_state.question_round = 1
-            st.session_state.session_context_text = ""
+        try:
+            with st.spinner("正在执行 LangGraph 分析工作流，完成后会在下方显示「2. 分析结果」..."):
+                st.session_state.analysis_state = modules["run_analysis"](
+                    st.session_state.resume_text,
+                    st.session_state.job_description,
+                    st.session_state.memory_text,
+                    st.session_state.github_context,
+                )
+                st.session_state.generation_state = None
+                st.session_state.answers = []
+                st.session_state.cumulative_answers = []
+                st.session_state.question_round = 1
+                st.session_state.session_context_text = ""
+        except Exception:
+            st.error("分析失败。请检查模型接口配置，或稍后重试。")
+            st.code(traceback.format_exc(), language="python")
+            return
         st.success("分析完成。")
 
 
