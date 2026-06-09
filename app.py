@@ -378,10 +378,17 @@ def render_analysis_section(modules) -> None:
     fit = state.get("job_fit_report")
 
     st.header("3. 分析结果")
-    tabs = st.tabs(["岗位匹配度", "信息足够度", "岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
+    tabs = st.tabs(["岗位评估", "补充信息", "调试信息"])
     with tabs[0]:
         if fit:
-            st.metric("岗位匹配度", f"{fit.score}%")
+            metric_col1, metric_col2 = st.columns([1, 1])
+            with metric_col1:
+                st.metric("岗位匹配度", f"{fit.score}%")
+            with metric_col2:
+                if sufficiency:
+                    st.metric("信息完整度", f"{sufficiency.score}%")
+
+            st.subheader("一句话评估")
             st.write(fit.recommendation)
             if fit.status == "high":
                 st.success("建议优先投递。")
@@ -392,65 +399,59 @@ def render_analysis_section(modules) -> None:
 
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader("匹配点")
+                st.subheader("命中点")
                 for item in fit.matched_points or ["暂无明确匹配点。"]:
                     st.write(f"- {item}")
+                if gap.matched_strengths:
+                    st.subheader("匹配优势")
+                    for item in gap.matched_strengths[:6]:
+                        st.write(f"- {item}")
             with col2:
-                st.subheader("风险")
+                st.subheader("风险与缺口")
                 for item in fit.risks or ["暂无明显风险。"]:
                     st.write(f"- {item}")
+                for item in gap.missing_information[:6]:
+                    st.write(f"- {item}")
+
+            if sufficiency:
+                with st.expander("证据完整度", expanded=False):
+                    st.write(sufficiency.summary)
+                    col3, col4 = st.columns(2)
+                    with col3:
+                        st.subheader("已有证据")
+                        for item in sufficiency.enough_evidence or ["暂无明确证据。"]:
+                            st.write(f"- {item}")
+                    with col4:
+                        st.subheader("建议补充")
+                        for item in sufficiency.missing_evidence or ["暂无明显缺口。"]:
+                            st.write(f"- {item}")
+
             st.subheader("简历切入角度")
             st.write(fit.suggested_resume_angle or "围绕岗位关键词重排项目经历。")
         else:
             st.info("尚未生成岗位匹配度评估。")
+
+        st.subheader("下一步")
+        st.write("先补充关键事实，或直接生成岗位交付材料。")
+
     with tabs[1]:
-        if sufficiency:
-            st.metric("当前信息足够度", f"{sufficiency.score}%")
-            st.write(sufficiency.summary)
-            if sufficiency.ready_to_generate:
-                st.success("当前信息已经可以生成一版定制简历。")
-            else:
-                st.warning("建议先继续补充信息，再生成正式简历。")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("已有证据")
-                for item in sufficiency.enough_evidence or ["暂无明确证据。"]:
-                    st.write(f"- {item}")
-            with col2:
-                st.subheader("建议补充")
-                for item in sufficiency.missing_evidence or ["暂无明显缺口。"]:
-                    st.write(f"- {item}")
-
-            st.subheader("下一步建议追问")
-            for item in sufficiency.recommended_questions or ["可以直接生成简历。"]:
-                st.write(f"- {item}")
-        else:
-            st.info("尚未生成信息足够度评估。")
-    with tabs[2]:
-        st.json(job.model_dump())
-    with tabs[3]:
-        st.json(candidate.model_dump())
-    with tabs[4]:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("匹配优势")
-            for item in gap.matched_strengths or ["暂未识别到明确匹配优势。"]:
-                st.write(f"- {item}")
-        with col2:
-            st.subheader("缺失信息")
-            for item in gap.missing_information or ["暂未识别到明显缺口。"]:
-                st.write(f"- {item}")
-    with tabs[5]:
         render_questions(modules, gap.questions_to_user)
+    with tabs[2]:
+        st.caption("这些是开发和核验用的结构化结果，默认不作为主流程展示。")
+        with st.expander("岗位结构化结果", expanded=False):
+            st.json(job.model_dump())
+        with st.expander("候选人结构化结果", expanded=False):
+            st.json(candidate.model_dump())
+        with st.expander("完整分析状态", expanded=False):
+            st.json(_json_safe_state(state))
 
 
 def render_questions(modules, questions) -> None:
     st.subheader("补充真实信息")
-    st.caption("你可以先回答一轮问题，再点击“继续追问”。Agent 会把回答沉淀到本轮记忆中，并根据岗位要求继续挖掘更具体的信息。信息足够时，也可以直接生成简历。")
+    st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
     questions = _filter_repeated_questions(questions)
     if not questions:
-        st.success("当前没有新的必须追问问题，可以直接生成定制简历。")
+        st.success("当前没有新的必须补充问题，可以直接生成岗位交付材料。")
 
     answers = []
     UserAnswer = modules["UserAnswer"]
@@ -481,7 +482,7 @@ def render_questions(modules, questions) -> None:
     memory_candidates = modules["curate_memory_candidates"](accepted_preview, st.session_state.github_context)
     selected_memory_candidates = []
     if memory_candidates:
-        with st.expander("本轮准备保存到个人记忆库的事实", expanded=True):
+        with st.expander("准备保存到个人记忆库的事实", expanded=False):
             st.caption("勾选后，这些内容会进入导出的 user_memory.json；不勾选也不影响本次简历生成。")
             for idx, candidate in enumerate(memory_candidates, start=1):
                 checked = st.checkbox(
@@ -495,38 +496,7 @@ def render_questions(modules, questions) -> None:
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("继续追问并更新记忆", type="secondary"):
-            accepted_answers = _accepted_answers(answers)
-            if not accepted_answers:
-                st.warning("请至少填写一个有效回答；如果都没有，可以直接点击“立刻生成定制简历”。")
-                return
-            st.session_state.cumulative_answers.extend(accepted_answers)
-            st.session_state.session_context_text = _merge_answers_into_memory(
-                st.session_state.session_context_text,
-                accepted_answers,
-                st.session_state.question_round,
-            )
-            st.session_state.memory_candidates.extend(selected_memory_candidates)
-            st.session_state.memory_text = _merge_memory_candidates_into_text(
-                st.session_state.memory_text,
-                selected_memory_candidates,
-                st.session_state.question_round,
-            )
-            with st.spinner("正在根据新回答重新分析，并生成下一轮追问..."):
-                st.session_state.analysis_state = modules["run_analysis"](
-                    st.session_state.resume_text,
-                    st.session_state.job_description,
-                    _combined_memory_context(),
-                    st.session_state.github_context,
-                    st.session_state.cumulative_answers,
-                )
-                st.session_state.question_round += 1
-                st.session_state.generation_state = None
-            st.success("已更新记忆并生成下一轮追问。")
-            st.rerun()
-
-    with col2:
-        if st.button("立刻生成定制简历", type="primary"):
+        if st.button("直接生成岗位交付材料", type="primary"):
             current_answers = _accepted_answers(answers)
             if current_answers:
                 st.session_state.cumulative_answers.extend(current_answers)
@@ -546,7 +516,7 @@ def render_questions(modules, questions) -> None:
             state["user_answers"] = all_answers
             state["memory_text"] = _combined_memory_context()
             state["github_context"] = st.session_state.github_context
-            with st.spinner("正在生成简历并执行事实校验..."):
+            with st.spinner("正在生成简历、开场白、改动说明并执行事实校验..."):
                 st.session_state.generation_state = modules["run_generation"](state)
                 tailored = st.session_state.generation_state["tailored_resume"]
                 fact_check = st.session_state.generation_state["fact_check"]
@@ -566,12 +536,55 @@ def render_questions(modules, questions) -> None:
                         fit_matched_points=fit.matched_points if fit else None,
                         suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
-            st.success("定制简历已生成。")
+            st.success("岗位交付材料已生成。")
+
+    with col2:
+        if st.button("保存补充并重新评估", type="secondary"):
+            accepted_answers = _accepted_answers(answers)
+            if not accepted_answers:
+                st.warning("请至少填写一个有效回答；如果都没有，可以直接生成岗位交付材料。")
+                return
+            st.session_state.cumulative_answers.extend(accepted_answers)
+            st.session_state.session_context_text = _merge_answers_into_memory(
+                st.session_state.session_context_text,
+                accepted_answers,
+                st.session_state.question_round,
+            )
+            st.session_state.memory_candidates.extend(selected_memory_candidates)
+            st.session_state.memory_text = _merge_memory_candidates_into_text(
+                st.session_state.memory_text,
+                selected_memory_candidates,
+                st.session_state.question_round,
+            )
+            with st.spinner("正在根据补充信息重新评估岗位匹配..."):
+                st.session_state.analysis_state = modules["run_analysis"](
+                    st.session_state.resume_text,
+                    st.session_state.job_description,
+                    _combined_memory_context(),
+                    st.session_state.github_context,
+                    st.session_state.cumulative_answers,
+                )
+                st.session_state.question_round += 1
+                st.session_state.generation_state = None
+            st.success("已更新记忆并刷新岗位评估。")
+            st.rerun()
 
 
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _json_safe_state(state):
+    result = {}
+    for key, value in dict(state).items():
+        if hasattr(value, "model_dump"):
+            result[key] = value.model_dump()
+        elif isinstance(value, list):
+            result[key] = [item.model_dump() if hasattr(item, "model_dump") else item for item in value]
+        else:
+            result[key] = value
+    return result
 
 
 def _find_job(workspace, job_id: str):
@@ -850,42 +863,61 @@ def render_generation_section(modules) -> None:
     full_markdown = modules["build_full_markdown"](tailored, fact_check)
 
     st.header("4. 生成结果")
-    tabs = st.tabs(["定制简历", "优化说明", "事实来源映射", "原始 JSON"])
+    tabs = st.tabs(["定制简历", "开场白", "改动说明", "待确认", "核验信息"])
     with tabs[0]:
         st.markdown(fact_check.final_resume_markdown or tailored.resume_markdown)
     with tabs[1]:
-        st.subheader("优化说明")
-        for item in tailored.optimization_notes:
-            st.write(f"- {item}")
-        st.subheader("已融入岗位关键词")
-        st.write("、".join(tailored.integrated_keywords) if tailored.integrated_keywords else "无")
-        st.subheader("仍建议补充的信息")
-        for item in tailored.still_missing_info or ["无"]:
-            st.write(f"- {item}")
+        st.markdown(tailored.opener_markdown or "暂无开场白。")
+        st.download_button(
+            "下载 opener.md",
+            data=(tailored.opener_markdown or "").encode("utf-8"),
+            file_name="opener.md",
+            mime="text/markdown",
+        )
+    with tabs[2]:
+        st.markdown(tailored.changelog_markdown or "暂无改动说明。")
+        st.download_button(
+            "下载 changelog.md",
+            data=(tailored.changelog_markdown or "").encode("utf-8"),
+            file_name="changelog.md",
+            mime="text/markdown",
+        )
+    with tabs[3]:
+        st.subheader("待用户处理")
+        missing = list(tailored.still_missing_info)
         if fact_check.needs_confirmation:
             st.subheader("待确认内容")
             for item in fact_check.needs_confirmation:
                 st.write(f"- {item}")
-    with tabs[2]:
-        st.dataframe([item.model_dump() for item in fact_check.evidence_map], use_container_width=True)
-    with tabs[3]:
-        st.code(
-            modules["pretty_json"](
-                {"tailored_resume": tailored.model_dump(), "fact_check": fact_check.model_dump()}
-            ),
-            language="json",
-        )
+        if missing:
+            st.subheader("建议补充")
+            for item in missing:
+                st.write(f"- [请填写：{item}]")
+        if not fact_check.needs_confirmation and not missing:
+            st.success("当前没有明显待确认或待补充内容。")
+    with tabs[4]:
+        st.subheader("已融入岗位关键词")
+        st.write("、".join(tailored.integrated_keywords) if tailored.integrated_keywords else "无")
+        with st.expander("事实来源映射", expanded=False):
+            st.dataframe([item.model_dump() for item in fact_check.evidence_map], use_container_width=True)
+        with st.expander("原始 JSON", expanded=False):
+            st.code(
+                modules["pretty_json"](
+                    {"tailored_resume": tailored.model_dump(), "fact_check": fact_check.model_dump()}
+                ),
+                language="json",
+            )
 
     st.download_button(
-        "下载 Markdown",
+        "下载完整 Markdown",
         data=full_markdown.encode("utf-8"),
-        file_name="tailored_resume.md",
+        file_name="job_package.md",
         mime="text/markdown",
     )
     st.download_button(
-        "下载 DOCX",
+        "下载完整 DOCX",
         data=modules["markdown_to_docx_bytes"](full_markdown),
-        file_name="tailored_resume.docx",
+        file_name="job_package.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 

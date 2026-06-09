@@ -25,6 +25,8 @@
 - 支持记忆候选确认：用户可以选择哪些追问回答和 GitHub 证据进入长期记忆 JSON。
 - 支持用户回答“没有 / 不清楚 / 跳过”，避免诱导编造经历。
 - 基于原始简历和用户补充信息生成定制化简历。
+- 生成岗位交付三件套：定制简历、HR 开场白、改动说明。
+- 改动说明会解释调整了哪里、为什么调整，并对缺失事实使用 `[请填写：...]` 占位。
 - 使用 Fact Checker Agent 检查关键内容来源。
 - 在规则兜底模式下也会把缺少证据的内容移出正式简历正文，放入待确认信息。
 - 输出事实来源映射表 evidence map。
@@ -56,7 +58,7 @@
 | Question Agent | 根据缺口生成具体追问问题 |
 | Sufficiency Agent | 评估当前事实来源是否足够支撑定制简历生成 |
 | Memory Curator | 将用户追问回答和 GitHub 证据整理为可复用的个人记忆事实 |
-| Resume Writer Agent | 基于原始简历和用户补充信息生成定制简历 |
+| Resume Writer Agent | 基于原始简历和用户补充信息生成定制简历、开场白和改动说明 |
 | Fact Checker Agent | 校验最终简历中的关键内容是否有来源，并拦截无证据内容 |
 | Export Agent | 导出 Markdown 和 DOCX |
 
@@ -126,8 +128,8 @@ flowchart TD
     F -- "否" --> I
     I --> J["Fact Checker Agent"]
     J --> K["Export Agent"]
-    K --> L["Markdown / DOCX"]
-    K --> M["Evidence Map"]
+    K --> L["简历 / 开场白 / 改动说明"]
+    K --> M["Markdown / DOCX / Evidence Map"]
 ```
 
 ## 安装方法

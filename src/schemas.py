@@ -174,6 +174,8 @@ class EvidenceItem(BaseModel):
 
 class TailoredResumeResult(BaseModel):
     resume_markdown: str = ""
+    opener_markdown: str = ""
+    changelog_markdown: str = ""
     optimization_notes: list[str] = Field(default_factory=list)
     integrated_keywords: list[str] = Field(default_factory=list)
     still_missing_info: list[str] = Field(default_factory=list)

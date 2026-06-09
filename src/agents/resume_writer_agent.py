@@ -29,7 +29,13 @@ def write_resume(
         ),
         TailoredResumeResult,
     )
-    return result or _fallback_write(candidate, job, gap, user_answers, memory_text, github_context)
+    if not result:
+        return _fallback_write(candidate, job, gap, user_answers, memory_text, github_context)
+    if not result.opener_markdown:
+        result.opener_markdown = _build_opener(candidate, job, gap, github_context)
+    if not result.changelog_markdown:
+        result.changelog_markdown = _build_changelog(job, gap, result.integrated_keywords, result.still_missing_info)
+    return result
 
 
 def _fallback_write(
@@ -141,11 +147,74 @@ def _fallback_write(
         )
     return TailoredResumeResult(
         resume_markdown="\n".join(lines),
+        opener_markdown=_build_opener(candidate, job, gap, github_context),
+        changelog_markdown=_build_changelog(job, gap, [k for k in job.keywords if k][:12], gap.missing_information[:8]),
         optimization_notes=["已按 JD 匹配点重排简历结构。", "已纳入个人记忆库和 GitHub 公开证据。", "没有为缺失技能或成果编造经历。"],
         integrated_keywords=[k for k in job.keywords if k][:12],
         still_missing_info=gap.missing_information[:8],
         evidence_map=evidence,
     )
+
+
+def _build_opener(
+    candidate: CandidateProfile,
+    job: JobAnalysis,
+    gap: GapAnalysis,
+    github_context: str,
+) -> str:
+    strengths = gap.matched_strengths[:2] or ["我有与岗位要求相关的项目/实践经历"]
+    github_line = "另外，我有可公开查看的 GitHub 项目证据，便于进一步核验项目实现。" if github_context.strip() else ""
+    lines = [
+        f"您好，我想应聘{job.job_title or '这个岗位'}。",
+        "",
+        "我关注到岗位要求中比较重视"
+        + ("、".join(job.keywords[:5]) if job.keywords else "岗位相关能力")
+        + "，我的经历中比较匹配的部分是：",
+    ]
+    for item in strengths:
+        lines.append(f"- {item}")
+    if github_line:
+        lines.extend(["", github_line])
+    lines.extend(
+        [
+            "",
+            "我已根据该岗位要求准备了一版定制简历，如方便的话，希望能进一步沟通岗位匹配情况。谢谢。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_changelog(
+    job: JobAnalysis,
+    gap: GapAnalysis,
+    keywords: list[str],
+    missing_info: list[str],
+) -> str:
+    lines = [
+        "## 已做调整",
+        "- 根据 JD 关键词重排并强化与岗位相关的经历表达。",
+        "- 优先保留有原始简历、个人记忆、GitHub 或用户回答支撑的内容。",
+        "- 对缺少证据的能力或成果保持保守表达，没有编造项目、数字或职责。",
+    ]
+    if keywords:
+        lines.extend(["", "## 关联 JD 关键词"])
+        for item in keywords[:12]:
+            lines.append(f"- {item}")
+    if gap.matched_strengths:
+        lines.extend(["", "## 使用的匹配依据"])
+        for item in gap.matched_strengths[:6]:
+            lines.append(f"- {item}")
+    if missing_info:
+        lines.extend(["", "## 需要用户补充"])
+        for item in missing_info[:8]:
+            lines.append(f"- [请填写：{item}]")
+    elif gap.missing_information:
+        lines.extend(["", "## 需要用户补充"])
+        for item in gap.missing_information[:8]:
+            lines.append(f"- [请填写：{item}]")
+    else:
+        lines.extend(["", "## 需要用户补充", "- 暂无明确缺失项。"])
+    return "\n".join(lines)
 
 
 def _short_lines(text: str) -> list[str]:

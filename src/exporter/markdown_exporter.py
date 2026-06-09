@@ -23,13 +23,20 @@ def build_full_markdown(
     fact_check: FactCheckResult,
 ) -> str:
     lines = [
+        "# 定制简历",
+        "",
         fact_check.final_resume_markdown or tailored.resume_markdown,
         "",
-        "## 优化说明",
+        "# 开场白",
+        "",
+        tailored.opener_markdown or "暂无开场白。",
+        "",
+        "# 改动说明",
+        "",
+        tailored.changelog_markdown or _fallback_changelog(tailored),
+        "",
+        "## 已融入岗位关键词",
     ]
-    for note in tailored.optimization_notes:
-        lines.append(f"- {note}")
-    lines.extend(["", "## 已融入岗位关键词"])
     lines.append("- " + "、".join(tailored.integrated_keywords) if tailored.integrated_keywords else "- 无")
     lines.extend(["", "## 仍建议补充的信息"])
     if tailored.still_missing_info:
@@ -53,3 +60,12 @@ def save_markdown(content: str, output_dir: Path, filename: str = "tailored_resu
 def _cell(value: str) -> str:
     return str(value or "").replace("|", "\\|").replace("\n", " ")[:500]
 
+
+def _fallback_changelog(tailored: TailoredResumeResult) -> str:
+    lines = ["## 已做调整"]
+    if tailored.optimization_notes:
+        for note in tailored.optimization_notes:
+            lines.append(f"- {note}")
+    else:
+        lines.append("- 已根据岗位要求调整简历表达。")
+    return "\n".join(lines)

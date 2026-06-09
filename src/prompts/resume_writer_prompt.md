@@ -11,8 +11,9 @@
 
 输出要求：
 - resume_markdown：完整定制简历正文，Markdown 格式。
+- opener_markdown：给 HR/招聘方的第一条沟通开场白，Markdown 格式；只能引用简历、记忆库、GitHub 或用户回答中存在的事实。
+- changelog_markdown：改动说明，Markdown 格式；逐条说明改了哪里、为什么改、依据哪个 JD 要求；如果有缺失数据，使用 `[请填写：xxx]`；如果是轻度推断，使用 `[需用户确认：xxx]`。
 - optimization_notes：说明做了哪些优化。
 - integrated_keywords：列出自然融入的 JD 关键词。
 - still_missing_info：仍建议补充的信息。
 - evidence_map：每条关键简历内容对应来源。
-
