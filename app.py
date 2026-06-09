@@ -195,14 +195,32 @@ def main() -> None:
     elif not settings.openai_api_key:
         st.warning("当前未配置 OPENAI_API_KEY，且未启用演示兜底。")
 
-    render_context_section(modules)
-    render_job_workspace_section(modules)
-    render_input_section(modules)
-    if st.session_state.analysis_state:
-        render_analysis_section(modules)
-    if st.session_state.generation_state:
-        render_generation_section(modules)
-    render_shortlist_section(modules)
+    prepare_tab, shortlist_tab, delivery_tab, source_tab, debug_tab = st.tabs(
+        ["准备材料", "Shortlist 工作台", "当前岗位交付", "信息源", "导出与调试"]
+    )
+
+    with prepare_tab:
+        render_input_section(modules)
+        if st.session_state.analysis_state and st.session_state.analysis_state.get("resume_quality_report"):
+            render_resume_quality_summary(st.session_state.analysis_state["resume_quality_report"])
+
+    with shortlist_tab:
+        render_job_workspace_section(modules)
+        render_shortlist_section(modules)
+
+    with delivery_tab:
+        if st.session_state.analysis_state:
+            render_analysis_section(modules)
+        else:
+            st.info("请先在「准备材料」填写简历和 JD，并点击「开始分析」。")
+        if st.session_state.generation_state:
+            render_generation_section(modules)
+
+    with source_tab:
+        render_context_section(modules)
+
+    with debug_tab:
+        render_debug_export_section(modules)
 
 
 def check_workspace_access(modules, settings) -> bool:
@@ -295,8 +313,66 @@ def render_workspace_sidebar(modules, settings) -> None:
         st.rerun()
 
 
+def render_resume_quality_summary(quality) -> None:
+    st.subheader("简历质量体检")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("简历质量", f"{quality.score}%")
+    col2.metric("可评估经历", quality.evaluated_items)
+    col3.metric("空壳经历", len(quality.empty_shell_items))
+    st.write(quality.summary)
+    if quality.empty_shell_items:
+        st.warning("存在空壳经历，建议先补全再生成正式投递版本。")
+    with st.expander("查看修复建议", expanded=False):
+        for item in quality.recommended_fixes:
+            st.write(f"- {item}")
+
+
+def render_debug_export_section(modules) -> None:
+    st.header("导出与调试")
+    st.caption("这里集中放置备份、迁移和开发调试信息。普通使用时不需要频繁打开。")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.download_button(
+            "导出工作区 JSON",
+            data=modules["workspace_to_json_text"](_build_workspace_snapshot(modules)).encode("utf-8"),
+            file_name="resume_agent_workspace.json",
+            mime="application/json",
+            key="debug_export_workspace",
+        )
+    with col2:
+        st.download_button(
+            "导出岗位库 JSON",
+            data=modules["job_workspace_to_json_text"](st.session_state.job_workspace).encode("utf-8"),
+            file_name="job_workspace.json",
+            mime="application/json",
+            key="debug_export_jobs",
+        )
+    with col3:
+        st.download_button(
+            "导出 shortlist.json",
+            data=modules["shortlist_to_json_text"](st.session_state.job_workspace).encode("utf-8"),
+            file_name="shortlist.json",
+            mime="application/json",
+            key="debug_export_shortlist",
+        )
+
+    st.subheader("调试信息")
+    if st.session_state.analysis_state:
+        with st.expander("完整分析状态", expanded=False):
+            st.json(_json_safe_state(st.session_state.analysis_state))
+    else:
+        st.info("当前还没有分析状态。")
+
+    if st.session_state.generation_state:
+        with st.expander("完整生成状态", expanded=False):
+            st.json(_json_safe_state(st.session_state.generation_state))
+    else:
+        st.info("当前还没有生成状态。")
+
+
 def render_job_workspace_section(modules) -> None:
-    st.header("1. 岗位库")
+    st.header("岗位池")
     st.caption("这里保存目标岗位、JD、投递状态和备注。岗位库会导出为 job_workspace.json，不依赖数据库。")
 
     workspace = st.session_state.job_workspace
@@ -399,7 +475,7 @@ def render_job_workspace_section(modules) -> None:
 
 
 def render_input_section(modules) -> None:
-    st.header("2. 输入材料")
+    st.header("准备材料")
     left, right = st.columns(2)
     with left:
         uploaded = st.file_uploader("上传原始简历", type=["pdf", "docx", "txt"])
@@ -419,7 +495,7 @@ def render_input_section(modules) -> None:
     if job_description.strip():
         st.session_state.job_description = job_description.strip()
 
-    st.caption("点击“开始分析”后，结果会显示在本区域下方的「3. 分析结果」。如果需要最终简历，请在追问页点击「立刻生成定制简历」。")
+    st.caption("点击“开始分析”后，可在「当前岗位交付」查看岗位评估、补充信息和生成结果。")
 
     action_col1, action_col2 = st.columns([1, 1])
     with action_col1:
@@ -481,8 +557,8 @@ def render_analysis_section(modules) -> None:
     quality = state.get("resume_quality_report")
     star = state.get("resume_star_profile")
 
-    st.header("3. 分析结果")
-    tabs = st.tabs(["岗位评估", "补充信息", "调试信息"])
+    st.header("当前岗位评估")
+    tabs = st.tabs(["岗位评估", "补充信息"])
     with tabs[0]:
         if fit:
             metric_col1, metric_col2, metric_col3 = st.columns([1, 1, 1])
@@ -586,20 +662,6 @@ def render_analysis_section(modules) -> None:
 
     with tabs[1]:
         render_questions(modules, gap.questions_to_user)
-    with tabs[2]:
-        st.caption("这些是开发和核验用的结构化结果，默认不作为主流程展示。")
-        with st.expander("岗位结构化结果", expanded=False):
-            st.json(job.model_dump())
-        with st.expander("候选人结构化结果", expanded=False):
-            st.json(candidate.model_dump())
-        if quality:
-            with st.expander("简历质量报告", expanded=False):
-                st.json(quality.model_dump())
-        if star:
-            with st.expander("STAR Profile", expanded=False):
-                st.json(star.model_dump())
-        with st.expander("完整分析状态", expanded=False):
-            st.json(_json_safe_state(state))
 
 
 def render_questions(modules, questions) -> None:
@@ -943,7 +1005,7 @@ def _batch_analyze_jobs(modules) -> None:
 
 
 def render_shortlist_section(modules) -> None:
-    st.header("5. Shortlist 总览")
+    st.header("Shortlist 总览")
     st.caption("参考 job-hunt 的求职工作区思路：把岗位按匹配度排序，用于决定优先分析和投递顺序。")
 
     workspace = st.session_state.job_workspace
@@ -1108,7 +1170,7 @@ def render_generation_section(modules) -> None:
     fact_check = state["fact_check"]
     full_markdown = modules["build_full_markdown"](tailored, fact_check)
 
-    st.header("4. 生成结果")
+    st.header("岗位交付材料")
     tabs = st.tabs(["定制简历", "开场白", "改动说明", "待确认", "核验信息"])
     with tabs[0]:
         st.markdown(fact_check.final_resume_markdown or tailored.resume_markdown)
@@ -1169,7 +1231,7 @@ def render_generation_section(modules) -> None:
 
 
 def render_context_section(modules) -> None:
-    st.header("0. 个人记忆与外部证据")
+    st.header("信息源")
     st.caption("这里用于补足原始简历没有写出的真实经历。Agent 只会把这些内容作为事实来源，不会凭空编造。")
 
     memory_tab, github_tab = st.tabs(["个人记忆库", "GitHub 证据"])
