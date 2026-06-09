@@ -16,3 +16,5 @@ services:
         value: "true"
       - key: WORKSPACE_SALT
         sync: false
+      - key: ALLOWED_WORKSPACE_KEYS
+        value: Hanabi

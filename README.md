@@ -77,7 +77,7 @@ LangGraph 负责编排状态流转，Streamlit 负责用户界面和 human-in-th
 - `job_workspace.json`：岗位工作区，包括岗位名称、公司、JD、岗位链接、投递状态、备注、匹配度和最后生成的简历文件名。
 - `shortlist.json`：根据岗位库生成的排序结果，包括匹配度、状态、平台、地点、薪资、投递链接、投递建议、风险和简历切入角度。
 
-工作区 Key 不是完整账号系统。它的目标是解决同一部署中重复填写的问题：用户输入相同 Key 后恢复自己的工作区。Key 不会明文保存，文件名使用 `WORKSPACE_SALT + Key` 的哈希。Streamlit Community Cloud 免费环境不适合承诺永久存储，因此仍建议定期导出工作区 JSON 备份。
+工作区 Key 不是完整账号系统。它的目标是解决同一部署中重复填写的问题：用户输入相同 Key 后恢复自己的工作区。Key 不会明文保存，文件名使用 `WORKSPACE_SALT + Key` 的哈希。默认只允许 `Hanabi` 这个 Key 进入系统；如需开放更多 Key，可配置 `ALLOWED_WORKSPACE_KEYS`，多个 Key 用英文逗号分隔。Streamlit Community Cloud 免费环境不适合承诺永久存储，因此仍建议定期导出工作区 JSON 备份。
 
 岗位状态支持：
 
@@ -180,6 +180,7 @@ OPENAI_BASE_URL=
 OPENAI_ENABLE_DEMO_FALLBACK=true
 APP_PASSWORD=
 WORKSPACE_SALT=change_this_to_a_random_string
+ALLOWED_WORKSPACE_KEYS=Hanabi
 ```
 
 启动应用：
@@ -206,6 +207,7 @@ OPENAI_ENABLE_DEMO_FALLBACK=true
 | OPENAI_ENABLE_DEMO_FALLBACK | 否 | 是否启用无 Key 或调用失败时的规则兜底 |
 | APP_PASSWORD | 否 | 兼容旧部署；当前主要作为工作区哈希盐值 fallback |
 | WORKSPACE_SALT | 推荐 | 工作区 Key 哈希盐值。部署到公网时建议填写随机字符串 |
+| ALLOWED_WORKSPACE_KEYS | 否 | 允许进入系统的工作区 Key，默认 `Hanabi`；多个 Key 用英文逗号分隔 |
 
 不要把真实 API Key 提交到代码仓库或打包进公开 ZIP。
 
@@ -219,6 +221,7 @@ OPENAI_BASE_URL=https://你的中转站域名/v1
 OPENAI_MODEL=中转站提供的模型ID
 OPENAI_ENABLE_DEMO_FALLBACK=true
 WORKSPACE_SALT=你设置的随机盐值
+ALLOWED_WORKSPACE_KEYS=Hanabi
 ```
 
 模型 ID 需要以中转站后台或文档为准。项目会先尝试 Responses API 结构化输出；如果中转站不支持 Responses API，会自动回退到 Chat Completions 的 JSON 输出。
@@ -277,6 +280,7 @@ OPENAI_BASE_URL = "https://www.fluapi.com/v1"
 OPENAI_MODEL = "gpt-5.5"
 OPENAI_ENABLE_DEMO_FALLBACK = "true"
 WORKSPACE_SALT = "请替换为随机字符串"
+ALLOWED_WORKSPACE_KEYS = "Hanabi"
 ```
 
 8. 点击 Deploy。
@@ -287,7 +291,7 @@ WORKSPACE_SALT = "请替换为随机字符串"
 https://你的应用名.streamlit.app
 ```
 
-访问时输入你自己的工作区 Key，例如：
+访问时输入允许的工作区 Key，例如：
 
 ```text
 Hanabi-2026
@@ -347,6 +351,7 @@ OPENAI_API_KEY=你的中转站密钥
 OPENAI_BASE_URL=https://你的中转站域名/v1
 OPENAI_MODEL=gpt-5.5
 WORKSPACE_SALT=你设置的随机字符串
+ALLOWED_WORKSPACE_KEYS=Hanabi
 ```
 
 其中 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `WORKSPACE_SALT` 建议使用环境变量或 Secrets 配置，不要写死在仓库里。

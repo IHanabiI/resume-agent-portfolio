@@ -218,6 +218,9 @@ def check_workspace_access(modules, settings) -> bool:
         if len(key) < 3:
             st.error("工作区 Key 至少需要 3 个字符。")
             return False
+        if not _workspace_key_allowed(key, settings.allowed_workspace_keys):
+            st.error("工作区 Key 不正确。")
+            return False
         try:
             snapshot = modules["load_workspace"](key, settings.workspace_salt or settings.app_password)
             st.session_state.workspace_key = key
@@ -234,6 +237,13 @@ def check_workspace_access(modules, settings) -> bool:
         except Exception as exc:
             st.error(f"工作区加载失败：{exc}")
     return False
+
+
+def _workspace_key_allowed(key: str, allowed_keys: str) -> bool:
+    allowed = [item.strip() for item in (allowed_keys or "").split(",") if item.strip()]
+    if not allowed:
+        return True
+    return key in allowed
 
 
 def render_workspace_sidebar(modules, settings) -> None:
