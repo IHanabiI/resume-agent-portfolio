@@ -266,8 +266,9 @@ def render_analysis_section(modules) -> None:
 def render_questions(modules, questions) -> None:
     st.subheader("补充真实信息")
     st.caption("你可以先回答一轮问题，再点击“继续追问”。Agent 会把回答沉淀到本轮记忆中，并根据岗位要求继续挖掘更具体的信息。信息足够时，也可以直接生成简历。")
+    questions = _filter_repeated_questions(questions)
     if not questions:
-        st.write("当前没有必须追问的问题，可以直接生成定制简历。")
+        st.success("当前没有新的必须追问问题，可以直接生成定制简历。")
 
     answers = []
     UserAnswer = modules["UserAnswer"]
@@ -335,6 +336,7 @@ def render_questions(modules, questions) -> None:
                     st.session_state.job_description,
                     _combined_memory_context(),
                     st.session_state.github_context,
+                    st.session_state.cumulative_answers,
                 )
                 st.session_state.question_round += 1
                 st.session_state.generation_state = None
@@ -375,6 +377,52 @@ def render_questions(modules, questions) -> None:
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _filter_repeated_questions(questions):
+    asked_keys = {_question_key(answer.question) for answer in st.session_state.cumulative_answers}
+    answered_requirements = {
+        answer.related_jd_requirement.strip().lower()
+        for answer in st.session_state.cumulative_answers
+        if answer.answer.strip() and answer.related_jd_requirement.strip()
+    }
+    filtered = []
+    seen_current = set()
+    for question in questions:
+        key = _question_key(question.question)
+        requirement = question.related_jd_requirement.strip().lower()
+        if key in asked_keys or key in seen_current:
+            continue
+        if requirement and requirement in answered_requirements:
+            continue
+        if _is_generic_project_question(question.question) and _answered_requirement(answered_requirements, "隐藏经历挖掘"):
+            continue
+        if _is_metric_question(question.question) and _answered_requirement(answered_requirements, "结果量化"):
+            continue
+        seen_current.add(key)
+        filtered.append(question)
+    return filtered
+
+
+def _question_key(text: str) -> str:
+    normalized = "".join(ch for ch in text.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+    replacements = ["请说明", "请补充", "是否", "你", "的", "和", "或", "与"]
+    for item in replacements:
+        normalized = normalized.replace(item, "")
+    return normalized[:80]
+
+
+def _answered_requirement(answered_requirements: set[str], requirement: str) -> bool:
+    target = requirement.lower()
+    return any(target == item or target in item or item in target for item in answered_requirements)
+
+
+def _is_generic_project_question(text: str) -> bool:
+    return "原始简历没有写出" in text and any(term in text for term in ["项目", "开源仓库", "自动化工具"])
+
+
+def _is_metric_question(text: str) -> bool:
+    return any(term in text for term in ["可确认数据", "用户数", "效率提升", "准确率", "处理规模"])
 
 
 def _combined_memory_context() -> str:

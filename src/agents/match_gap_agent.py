@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
-from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, QuestionItem
+from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, QuestionItem, UserAnswer
 
 
 def analyze_match_and_gap(
@@ -11,10 +11,11 @@ def analyze_match_and_gap(
     resume_text: str,
     memory_text: str = "",
     github_context: str = "",
+    user_answers: list[UserAnswer] | None = None,
     llm: LLMClient | None = None,
 ) -> GapAnalysis:
     llm = llm or LLMClient()
-    context = _build_context(resume_text, memory_text, github_context)
+    context = _build_context(resume_text, memory_text, github_context, user_answers or [])
     if llm.settings.fast_analysis_mode:
         return _fallback_gap(candidate, job, context)
     prompt = load_prompt("match_gap_prompt.md")
@@ -29,12 +30,25 @@ def analyze_match_and_gap(
     return result or _fallback_gap(candidate, job, context)
 
 
-def _build_context(resume_text: str, memory_text: str, github_context: str) -> str:
+def _build_context(
+    resume_text: str,
+    memory_text: str,
+    github_context: str,
+    user_answers: list[UserAnswer],
+) -> str:
     sections = [f"## 原始简历\n{resume_text}"]
     if memory_text.strip():
         sections.append(f"## 个人记忆库\n{memory_text}")
     if github_context.strip():
         sections.append(f"## GitHub 公开证据\n{github_context}")
+    if user_answers:
+        answer_text = "\n".join(
+            f"- 问题：{answer.question}\n  回答：{answer.answer}\n  关联岗位要求：{answer.related_jd_requirement}"
+            for answer in user_answers
+            if answer.answer.strip()
+        )
+        if answer_text.strip():
+            sections.append(f"## 已回答追问\n{answer_text}")
     return "\n\n".join(sections)
 
 
@@ -62,7 +76,7 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
                     )
                 )
 
-    if len(questions) < 5:
+    if len(questions) < 5 and not _has_project_context(context):
         questions.append(
             QuestionItem(
                 question="你是否有与目标岗位相关、但原始简历没有写出的项目、实习、课程设计、开源仓库或自动化工具经历？请补充事实和证据。",
@@ -70,7 +84,7 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
                 related_jd_requirement="隐藏经历挖掘",
             )
         )
-    if len(questions) < 5:
+    if len(questions) < 5 and not _has_metric_context(context):
         questions.append(
             QuestionItem(
                 question="这些经历是否有可确认数据，例如处理规模、交付周期、用户数、节省时间、准确率或效率提升？没有数据可以回答“没有”。",
@@ -84,3 +98,20 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
         missing_information=missing[:8],
         questions_to_user=questions[:5],
     )
+
+
+def _has_project_context(context: str) -> bool:
+    lowered = context.lower()
+    if any(term in lowered for term in ["github", "gitlab", "gitee", "repo", "repository"]):
+        return True
+    project_terms = ["项目", "github", "开源", "仓库", "mod", "agent", "工具", "系统", "模块"]
+    return sum(1 for term in project_terms if term in lowered) >= 2
+
+
+def _has_metric_context(context: str) -> bool:
+    lowered = context.lower()
+    metric_terms = ["浏览量", "点赞", "下载", "用户", "群", "效率", "准确率", "提升", "节省", "交付周期"]
+    digit_count = sum(1 for ch in context if ch.isdigit())
+    has_number = digit_count >= 2 or any(term in lowered for term in ["w", "万", "百", "千"])
+    has_metric_word = any(term in lowered for term in metric_terms)
+    return has_number and (has_metric_word or digit_count >= 3)

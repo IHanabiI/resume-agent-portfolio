@@ -50,6 +50,7 @@ def run_analysis(
     job_description: str,
     memory_text: str = "",
     github_context: str = "",
+    user_answers: list | None = None,
 ) -> ResumeAgentState:
     app = build_analysis_graph()
     return app.invoke(
@@ -58,6 +59,7 @@ def run_analysis(
             "job_description": job_description,
             "memory_text": memory_text,
             "github_context": github_context,
+            "user_answers": user_answers or [],
         }
     )
 

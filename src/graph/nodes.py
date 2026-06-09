@@ -29,6 +29,7 @@ def match_gap_node(state: ResumeAgentState) -> ResumeAgentState:
         state["resume_text"],
         state.get("memory_text", ""),
         state.get("github_context", ""),
+        state.get("user_answers", []),
         llm,
     )
     return {"gap_analysis": gap, "needs_questions": bool(gap.questions_to_user)}
