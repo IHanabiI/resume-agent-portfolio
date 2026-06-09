@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PROMPT_DIR = ROOT_DIR / "src" / "prompts"
 OUTPUT_DIR = ROOT_DIR / "outputs"
+WORKSPACE_DIR = ROOT_DIR / "data" / "workspaces"
 
 
 class Settings(BaseSettings):
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     openai_base_url: str = Field(default="", alias="OPENAI_BASE_URL")
     enable_demo_fallback: bool = Field(default=True, alias="OPENAI_ENABLE_DEMO_FALLBACK")
     app_password: str = Field(default="", alias="APP_PASSWORD")
+    workspace_salt: str = Field(default="", alias="WORKSPACE_SALT")
     openai_timeout_seconds: float = Field(default=45.0, alias="OPENAI_TIMEOUT_SECONDS")
     fast_analysis_mode: bool = Field(default=True, alias="RESUME_AGENT_FAST_ANALYSIS")
 
@@ -50,6 +52,7 @@ def _load_streamlit_secrets() -> None:
             "OPENAI_BASE_URL",
             "OPENAI_ENABLE_DEMO_FALLBACK",
             "APP_PASSWORD",
+            "WORKSPACE_SALT",
             "OPENAI_TIMEOUT_SECONDS",
             "RESUME_AGENT_FAST_ANALYSIS",
         ]:

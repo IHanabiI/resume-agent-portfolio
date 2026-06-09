@@ -36,7 +36,24 @@ def load_app_modules():
     )
     from src.llm_client import pretty_json
     from src import memory_store
-    from src.schemas import JobPosting, JobWorkspace, MemoryFact, UserAnswer, UserMemory
+    from src.workspace_store import (
+        WorkspaceSnapshot,
+        delete_workspace,
+        load_workspace,
+        parse_workspace_json,
+        save_workspace,
+        workspace_to_json_text,
+    )
+    from src.schemas import (
+        FactCheckResult,
+        JobPosting,
+        JobWorkspace,
+        MemoryCandidate,
+        MemoryFact,
+        TailoredResumeResult,
+        UserAnswer,
+        UserMemory,
+    )
 
     parse_memory_upload = memory_store.parse_memory_upload
     curate_memory_candidates = getattr(memory_store, "curate_memory_candidates", lambda answers=None, github_context="": [])
@@ -95,6 +112,12 @@ def load_app_modules():
         "run_analysis": run_analysis,
         "run_generation": run_generation,
         "pretty_json": pretty_json,
+        "WorkspaceSnapshot": WorkspaceSnapshot,
+        "delete_workspace": delete_workspace,
+        "load_workspace": load_workspace,
+        "parse_workspace_json": parse_workspace_json,
+        "save_workspace": save_workspace,
+        "workspace_to_json_text": workspace_to_json_text,
         "build_memory_json_text": build_memory_json_text,
         "curate_memory_candidates": curate_memory_candidates,
         "memory_to_json_text": memory_to_json_text,
@@ -102,6 +125,9 @@ def load_app_modules():
         "parse_memory_upload": parse_memory_upload,
         "JobPosting": JobPosting,
         "JobWorkspace": JobWorkspace,
+        "MemoryCandidate": MemoryCandidate,
+        "TailoredResumeResult": TailoredResumeResult,
+        "FactCheckResult": FactCheckResult,
         "UserAnswer": UserAnswer,
     }
 
@@ -127,6 +153,11 @@ def init_state() -> None:
         "job_source_url": "",
         "job_notes": "",
         "job_status": "待分析",
+        "workspace_key": "",
+        "workspace_id": "",
+        "workspace_loaded": False,
+        "workspace_updated_at": "",
+        "workspace_upload_done": False,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -148,10 +179,12 @@ def main() -> None:
 
     init_state()
 
-    if not check_access(settings.app_password):
+    if not check_workspace_access(modules, settings):
         return
 
     with st.sidebar:
+        render_workspace_sidebar(modules, settings)
+        st.divider()
         st.header("运行配置")
         st.write(f"模型：`{settings.openai_model}`")
         st.write(f"接口地址：`{settings.openai_base_url or 'OpenAI 默认地址'}`")
@@ -172,27 +205,84 @@ def main() -> None:
     render_shortlist_section(modules)
 
 
-def check_access(app_password: str) -> bool:
-    if not app_password:
-        return True
-    if st.session_state.get("authenticated"):
-        with st.sidebar:
-            st.success("访问验证已通过")
-            if st.button("退出访问"):
-                st.session_state.authenticated = False
-                st.rerun()
+def check_workspace_access(modules, settings) -> bool:
+    if st.session_state.get("workspace_loaded"):
         return True
 
-    st.subheader("访问验证")
-    st.write("请输入项目访问密码。")
-    entered = st.text_input("访问密码", type="password")
-    if st.button("进入项目", type="primary"):
-        if entered == app_password:
-            st.session_state.authenticated = True
+    st.subheader("工作区 Key")
+    st.write("请输入你的工作区 Key。相同 Key 会自动恢复上次保存的简历、岗位库、记忆库和生成结果。")
+    entered = st.text_input("工作区 Key", type="password", placeholder="例如 Hanabi-2026")
+    st.caption("Key 不会明文保存；系统只保存它的哈希。请不要使用过于简单的 Key。")
+    if st.button("进入工作区", type="primary"):
+        key = entered.strip()
+        if len(key) < 3:
+            st.error("工作区 Key 至少需要 3 个字符。")
+            return False
+        try:
+            snapshot = modules["load_workspace"](key, settings.workspace_salt or settings.app_password)
+            st.session_state.workspace_key = key
+            if snapshot:
+                _apply_workspace_snapshot(modules, snapshot)
+                st.success("已恢复上次工作区。")
+            else:
+                st.session_state.workspace_id = ""
+                st.session_state.workspace_updated_at = ""
+                st.success("已创建新工作区。")
+            st.session_state.workspace_loaded = True
+            _auto_save_workspace(modules, settings)
             st.rerun()
-        else:
-            st.error("访问密码不正确。")
+        except Exception as exc:
+            st.error(f"工作区加载失败：{exc}")
     return False
+
+
+def render_workspace_sidebar(modules, settings) -> None:
+    st.header("工作区")
+    st.write(f"状态：`已加载`")
+    if st.session_state.workspace_id:
+        st.caption(f"ID：{st.session_state.workspace_id}")
+    if st.session_state.workspace_updated_at:
+        st.caption(f"最后保存：{st.session_state.workspace_updated_at}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("保存", key="save_workspace_now"):
+            snapshot = _auto_save_workspace(modules, settings)
+            if snapshot:
+                st.success("已保存工作区。")
+    with col2:
+        if st.button("退出", key="logout_workspace"):
+            _auto_save_workspace(modules, settings)
+            st.session_state.clear()
+            st.rerun()
+
+    snapshot = _build_workspace_snapshot(modules)
+    st.download_button(
+        "导出工作区 JSON",
+        data=modules["workspace_to_json_text"](snapshot).encode("utf-8"),
+        file_name="resume_agent_workspace.json",
+        mime="application/json",
+    )
+
+    uploaded = st.file_uploader("导入工作区 JSON", type=["json"], key="workspace_upload")
+    if uploaded and not st.session_state.get("workspace_upload_done"):
+        try:
+            imported = modules["parse_workspace_json"](uploaded.getvalue().decode("utf-8", errors="ignore"))
+            _apply_workspace_snapshot(modules, imported)
+            _auto_save_workspace(modules, settings)
+            st.session_state.workspace_upload_done = True
+            st.success("已导入并保存工作区。")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"工作区导入失败：{exc}")
+    elif not uploaded:
+        st.session_state.workspace_upload_done = False
+
+    if st.button("清空当前工作区", key="delete_workspace"):
+        if modules["delete_workspace"](st.session_state.workspace_key, settings.workspace_salt or settings.app_password):
+            st.success("已删除当前工作区文件。")
+        st.session_state.clear()
+        st.rerun()
 
 
 def render_job_workspace_section(modules) -> None:
@@ -208,6 +298,7 @@ def render_job_workspace_section(modules) -> None:
         active_job = modules["get_active_job"](workspace)
         if active_job:
             _load_job_into_session(active_job)
+        _auto_save_workspace(modules, modules["get_settings"]())
         st.success("已导入岗位库。")
 
     if workspace.jobs:
@@ -362,6 +453,7 @@ def render_input_section(modules) -> None:
                     suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                 )
                 st.session_state.job_status = "已分析"
+                _auto_save_workspace(modules, modules["get_settings"]())
         except Exception:
             st.error("分析失败。请检查模型接口配置，或稍后重试。")
             st.code(traceback.format_exc(), language="python")
@@ -590,6 +682,7 @@ def render_questions(modules, questions) -> None:
                         fit_matched_points=fit.matched_points if fit else None,
                         suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
+                _auto_save_workspace(modules, modules["get_settings"]())
             st.success("岗位交付材料已生成。")
 
     with col2:
@@ -620,6 +713,7 @@ def render_questions(modules, questions) -> None:
                 )
                 st.session_state.question_round += 1
                 st.session_state.generation_state = None
+                _auto_save_workspace(modules, modules["get_settings"]())
             st.success("已更新记忆并刷新岗位评估。")
             st.rerun()
 
@@ -627,6 +721,92 @@ def render_questions(modules, questions) -> None:
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _build_workspace_snapshot(modules):
+    WorkspaceSnapshot = modules["WorkspaceSnapshot"]
+    generation = st.session_state.get("generation_state") or {}
+    tailored = generation.get("tailored_resume") if isinstance(generation, dict) else None
+    fact_check = generation.get("fact_check") if isinstance(generation, dict) else None
+    return WorkspaceSnapshot(
+        workspace_id=st.session_state.get("workspace_id", ""),
+        updated_at=st.session_state.get("workspace_updated_at", ""),
+        resume_text=st.session_state.resume_text,
+        job_description=st.session_state.job_description,
+        memory_text=st.session_state.memory_text,
+        github_input=st.session_state.github_input,
+        github_context=st.session_state.github_context,
+        session_context_text=st.session_state.session_context_text,
+        active_job_id=st.session_state.active_job_id,
+        job_company=st.session_state.job_company,
+        job_title=st.session_state.job_title,
+        job_source_url=st.session_state.job_source_url,
+        job_notes=st.session_state.job_notes,
+        job_status=st.session_state.job_status,
+        job_workspace=st.session_state.job_workspace.model_dump() if st.session_state.job_workspace else {},
+        cumulative_answers=[
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in st.session_state.cumulative_answers
+        ],
+        memory_candidates=[
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in st.session_state.memory_candidates
+        ],
+        last_tailored_resume=tailored.model_dump() if hasattr(tailored, "model_dump") else {},
+        last_fact_check=fact_check.model_dump() if hasattr(fact_check, "model_dump") else {},
+    )
+
+
+def _apply_workspace_snapshot(modules, snapshot) -> None:
+    JobWorkspace = modules["JobWorkspace"]
+    UserAnswer = modules["UserAnswer"]
+    MemoryCandidate = modules["MemoryCandidate"]
+    TailoredResumeResult = modules["TailoredResumeResult"]
+    FactCheckResult = modules["FactCheckResult"]
+
+    st.session_state.workspace_id = snapshot.workspace_id
+    st.session_state.workspace_updated_at = snapshot.updated_at
+    st.session_state.resume_text = snapshot.resume_text
+    st.session_state.job_description = snapshot.job_description
+    st.session_state.memory_text = snapshot.memory_text
+    st.session_state.github_input = snapshot.github_input
+    st.session_state.github_context = snapshot.github_context
+    st.session_state.session_context_text = snapshot.session_context_text
+    st.session_state.active_job_id = snapshot.active_job_id
+    st.session_state.job_company = snapshot.job_company
+    st.session_state.job_title = snapshot.job_title
+    st.session_state.job_source_url = snapshot.job_source_url
+    st.session_state.job_notes = snapshot.job_notes
+    st.session_state.job_status = snapshot.job_status or "待分析"
+    st.session_state.job_workspace = JobWorkspace.model_validate(snapshot.job_workspace or {})
+    st.session_state.cumulative_answers = [
+        UserAnswer.model_validate(item) for item in snapshot.cumulative_answers
+    ]
+    st.session_state.memory_candidates = [
+        MemoryCandidate.model_validate(item) for item in snapshot.memory_candidates
+    ]
+    st.session_state.analysis_state = None
+    if snapshot.last_tailored_resume and snapshot.last_fact_check:
+        st.session_state.generation_state = {
+            "tailored_resume": TailoredResumeResult.model_validate(snapshot.last_tailored_resume),
+            "fact_check": FactCheckResult.model_validate(snapshot.last_fact_check),
+        }
+    else:
+        st.session_state.generation_state = None
+
+
+def _auto_save_workspace(modules, settings):
+    if not st.session_state.get("workspace_key"):
+        return None
+    snapshot = _build_workspace_snapshot(modules)
+    saved = modules["save_workspace"](
+        st.session_state.workspace_key,
+        snapshot,
+        settings.workspace_salt or settings.app_password,
+    )
+    st.session_state.workspace_id = saved.workspace_id
+    st.session_state.workspace_updated_at = saved.updated_at
+    return saved
 
 
 def _json_safe_state(state):
@@ -691,6 +871,7 @@ def _upsert_current_job(modules):
     st.session_state.active_job_id = job.job_id
     st.session_state.job_workspace.active_job_id = job.job_id
     st.session_state.job_title = title
+    _auto_save_workspace(modules, modules["get_settings"]())
     return job
 
 
@@ -748,6 +929,7 @@ def _batch_analyze_jobs(modules) -> None:
         with st.expander("分析失败的岗位", expanded=True):
             for item in failures:
                 st.write(f"- {item}")
+    _auto_save_workspace(modules, modules["get_settings"]())
 
 
 def render_shortlist_section(modules) -> None:
@@ -988,6 +1170,7 @@ def render_context_section(modules) -> None:
             text = memory_file.getvalue().decode("utf-8", errors="ignore")
             memory = modules["parse_memory_upload"](text)
             st.session_state.memory_text = modules["memory_to_text"](memory)
+            _auto_save_workspace(modules, modules["get_settings"]())
             st.success("已导入个人记忆库。")
 
         st.session_state.memory_text = st.text_area(
@@ -1029,6 +1212,7 @@ def render_context_section(modules) -> None:
                 with st.spinner("正在读取 GitHub 公开仓库信息..."):
                     context = modules["collect_github_context"](st.session_state.github_input)
                     st.session_state.github_context = modules["github_context_to_text"](context)
+                    _auto_save_workspace(modules, modules["get_settings"]())
                 st.success("GitHub 信息读取完成。")
 
         if st.session_state.github_context:

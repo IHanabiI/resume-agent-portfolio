@@ -7,4 +7,6 @@ outputs/*
 !outputs/.gitkeep
 screenshots/*
 !screenshots/.gitkeep
+data/workspaces/*
+!data/workspaces/.gitkeep
 .streamlit/secrets.toml

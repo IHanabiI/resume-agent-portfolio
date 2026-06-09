@@ -14,5 +14,5 @@ services:
         value: gpt-5.5
       - key: OPENAI_ENABLE_DEMO_FALLBACK
         value: "true"
-      - key: APP_PASSWORD
+      - key: WORKSPACE_SALT
         sync: false
