@@ -29,6 +29,8 @@ def load_app_modules():
         infer_job_title_from_jd,
         job_workspace_to_json_text,
         parse_job_workspace_upload,
+        ranked_jobs,
+        shortlist_to_json_text,
         update_job_status,
         upsert_job,
     )
@@ -86,6 +88,8 @@ def load_app_modules():
         "infer_job_title_from_jd": infer_job_title_from_jd,
         "job_workspace_to_json_text": job_workspace_to_json_text,
         "parse_job_workspace_upload": parse_job_workspace_upload,
+        "ranked_jobs": ranked_jobs,
+        "shortlist_to_json_text": shortlist_to_json_text,
         "update_job_status": update_job_status,
         "upsert_job": upsert_job,
         "run_analysis": run_analysis,
@@ -165,6 +169,7 @@ def main() -> None:
         render_analysis_section(modules)
     if st.session_state.generation_state:
         render_generation_section(modules)
+    render_shortlist_section(modules)
 
 
 def check_access(app_password: str) -> bool:
@@ -257,10 +262,14 @@ def render_job_workspace_section(modules) -> None:
 
     st.session_state.job_notes = st.text_area("岗位备注", value=st.session_state.job_notes, height=90)
 
-    col_save, col_export = st.columns([1, 1])
+    col_save, col_batch, col_export = st.columns([1, 1, 1])
     with col_save:
         if st.button("保存当前 JD 到岗位库", type="secondary"):
             _save_current_job(modules)
+
+    with col_batch:
+        if st.button("批量分析岗位库", type="secondary"):
+            _batch_analyze_jobs(modules)
 
     with col_export:
         st.download_button(
@@ -277,6 +286,9 @@ def render_job_workspace_section(modules) -> None:
                 "岗位": job.title,
                 "状态": job.status,
                 "匹配度": f"{job.match_score}%" if job.match_score else "",
+                "平台": job.platform,
+                "地点": job.location,
+                "薪资": job.salary,
                 "链接": job.source_url,
                 "更新时间": job.updated_at,
             }
@@ -342,6 +354,10 @@ def render_input_section(modules) -> None:
                         st.session_state.active_job_id,
                         "已分析",
                         fit.score if fit else None,
+                        fit_recommendation=fit.recommendation if fit else "",
+                        fit_risks=fit.risks if fit else None,
+                        fit_matched_points=fit.matched_points if fit else None,
+                        suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
         except Exception:
             st.error("分析失败。请检查模型接口配置，或稍后重试。")
@@ -542,6 +558,10 @@ def render_questions(modules, questions) -> None:
                         "已生成简历",
                         fit.score if fit else None,
                         "tailored_resume.docx",
+                        fit_recommendation=fit.recommendation if fit else "",
+                        fit_risks=fit.risks if fit else None,
+                        fit_matched_points=fit.matched_points if fit else None,
+                        suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
             st.success("定制简历已生成。")
 
@@ -595,6 +615,142 @@ def _save_current_job(modules) -> None:
     st.session_state.job_title = title
     st.success("已保存岗位。")
     st.rerun()
+
+
+def _batch_analyze_jobs(modules) -> None:
+    if not st.session_state.resume_text.strip():
+        st.error("请先在「2. 输入材料」上传或粘贴原始简历，再批量分析岗位库。")
+        return
+    jobs = [job for job in st.session_state.job_workspace.jobs if job.jd_text.strip()]
+    if not jobs:
+        st.error("岗位库里没有可分析的 JD。")
+        return
+
+    original_active_job_id = st.session_state.active_job_id or st.session_state.job_workspace.active_job_id
+    progress = st.progress(0, text="准备批量分析岗位库...")
+    success_count = 0
+    failures = []
+
+    with st.spinner("正在批量分析岗位库，完成后可以在 Shortlist 总览查看排序..."):
+        for index, job in enumerate(jobs, start=1):
+            progress.progress(
+                int((index - 1) * 100 / len(jobs)),
+                text=f"正在分析：{job.company or '未填写公司'} - {job.title or '未命名岗位'}",
+            )
+            try:
+                state = modules["run_analysis"](
+                    st.session_state.resume_text,
+                    job.jd_text,
+                    _combined_memory_context(),
+                    st.session_state.github_context,
+                )
+                fit = state.get("job_fit_report")
+                st.session_state.job_workspace = modules["update_job_status"](
+                    st.session_state.job_workspace,
+                    job.job_id,
+                    "已分析",
+                    fit.score if fit else None,
+                    fit_recommendation=fit.recommendation if fit else "",
+                    fit_risks=fit.risks if fit else None,
+                    fit_matched_points=fit.matched_points if fit else None,
+                    suggested_resume_angle=fit.suggested_resume_angle if fit else "",
+                )
+                if job.job_id == original_active_job_id:
+                    st.session_state.analysis_state = state
+                    st.session_state.job_description = job.jd_text
+                success_count += 1
+            except Exception as exc:
+                failures.append(f"{job.company or '未填写公司'} - {job.title or '未命名岗位'}：{exc}")
+        progress.progress(100, text="批量分析完成。")
+
+    st.session_state.job_workspace.active_job_id = original_active_job_id
+    st.session_state.active_job_id = original_active_job_id
+    if success_count:
+        st.success(f"已完成 {success_count} 个岗位的批量分析。")
+    if failures:
+        with st.expander("分析失败的岗位", expanded=True):
+            for item in failures:
+                st.write(f"- {item}")
+
+
+def render_shortlist_section(modules) -> None:
+    st.header("5. Shortlist 总览")
+    st.caption("参考 job-hunt 的求职工作区思路：把岗位按匹配度排序，用于决定优先分析和投递顺序。")
+
+    workspace = st.session_state.job_workspace
+    if not workspace.jobs:
+        st.info("岗位库为空。先导入 `.jobs.json` 或保存一个 JD 后，这里会显示排序榜单。")
+        return
+
+    ranked = modules["ranked_jobs"](workspace)
+    rows = [
+        {
+            "排名": index,
+            "匹配度": f"{job.match_score}%" if job.match_score else "未分析",
+            "公司": job.company or "未填写公司",
+            "岗位": job.title or "未命名岗位",
+            "状态": job.status,
+            "平台": job.platform,
+            "地点": job.location,
+            "薪资": job.salary,
+            "投递链接": job.source_url,
+            "建议": job.fit_recommendation,
+            "最后简历": job.last_resume_file,
+        }
+        for index, job in enumerate(ranked, start=1)
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    col_load, col_export = st.columns([1, 1])
+    with col_load:
+        selected_id = st.selectbox(
+            "从 Shortlist 加载岗位",
+            options=[job.job_id for job in ranked],
+            format_func=lambda job_id: _short_job_label(ranked, job_id),
+            key="shortlist_selected_job",
+        )
+        if st.button("加载该岗位继续处理", key="load_shortlist_job"):
+            selected = _find_job(workspace, selected_id)
+            if selected:
+                _load_job_into_session(selected)
+                st.success("已加载岗位。")
+                st.rerun()
+
+    with col_export:
+        st.download_button(
+            "下载 shortlist.json",
+            data=modules["shortlist_to_json_text"](workspace).encode("utf-8"),
+            file_name="shortlist.json",
+            mime="application/json",
+        )
+
+    selected = _find_job(workspace, st.session_state.get("shortlist_selected_job", ""))
+    if selected:
+        with st.expander("当前选中岗位详情", expanded=False):
+            st.write(f"**公司**：{selected.company or '未填写'}")
+            st.write(f"**岗位**：{selected.title or '未命名岗位'}")
+            st.write(f"**匹配度**：{selected.match_score}%")
+            st.write(f"**建议**：{selected.fit_recommendation or '尚未分析'}")
+            st.write(f"**简历切入角度**：{selected.suggested_resume_angle or '尚未分析'}")
+            if selected.fit_matched_points:
+                st.subheader("匹配点")
+                for item in selected.fit_matched_points:
+                    st.write(f"- {item}")
+            if selected.fit_risks:
+                st.subheader("风险")
+                for item in selected.fit_risks:
+                    st.write(f"- {item}")
+            if selected.notes:
+                st.subheader("备注")
+                st.write(selected.notes)
+
+
+def _short_job_label(jobs, job_id: str) -> str:
+    for job in jobs:
+        if job.job_id == job_id:
+            score = f"{job.match_score}%" if job.match_score else "未分析"
+            return f"{score} | {job.company or '未填写公司'} - {job.title or '未命名岗位'}"
+    return job_id
 
 
 def _filter_repeated_questions(questions):

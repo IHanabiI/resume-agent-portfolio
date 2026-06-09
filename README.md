@@ -13,7 +13,10 @@
 - 支持个人记忆库，用于补充原始简历没有写出的真实经历、技能、项目事实和表达偏好。
 - 支持读取 GitHub 公开信息，提取公开仓库、语言、主题、README 摘要等可用证据。
 - 支持岗位库，用 JSON 保存目标岗位、JD、岗位链接、投递状态和备注。
+- 支持导入 job-hunt / 普通 `.jobs.json` 批量岗位数据，并兼容平台、地点、薪资、岗位要求等字段。
 - 支持从岗位库加载 JD，也可以把当前 JD 保存为岗位记录。
+- 支持批量分析岗位库，为每个岗位生成匹配度、投递建议、风险和简历切入角度。
+- 支持 Shortlist 总览，按匹配度排序目标岗位，并导出 `shortlist.json`。
 - 对比 JD 与简历，输出匹配优势和缺失信息。
 - 输出岗位匹配度评分，辅助判断岗位是否值得投递。
 - 输出信息足够度评分，提示当前材料是否足以生成有竞争力的定制简历。
@@ -65,12 +68,46 @@ LangGraph 负责编排状态流转，Streamlit 负责用户界面和 human-in-th
 
 - `user_memory.json`：个人长期事实资产，包括技能、项目、追问沉淀、GitHub 证据和禁写项。
 - `job_workspace.json`：岗位工作区，包括岗位名称、公司、JD、岗位链接、投递状态、备注、匹配度和最后生成的简历文件名。
+- `shortlist.json`：根据岗位库生成的排序结果，包括匹配度、状态、平台、地点、薪资、投递链接、投递建议、风险和简历切入角度。
 
 岗位状态支持：
 
 ```text
 已收藏 / 待分析 / 已分析 / 已生成简历 / 已投递 / 面试中 / 已拒绝 / 已 offer / 放弃
 ```
+
+### 批量岗位导入与 Shortlist
+
+岗位库导入支持三类输入：
+
+- 本项目导出的 `job_workspace.json`。
+- job-hunt / Chrome 插件风格的 `.jobs.json`，例如 `{ "format": "job-hunt-jobs", "jobs": [...] }`。
+- 普通 JSON 岗位列表，例如 `[{"title": "...", "company": "...", "description": "..."}]` 或 `{ "jobs": [...] }`。
+
+兼容字段包括：
+
+```text
+title / job_title / positionName
+company / companyName
+url / source_url / jobUrl / applyUrl
+platform / source / site
+location / city / workLocation
+salary / salaryRange / compensation
+requirements / job_requirements / jobRequirements
+job_description / description / jd_text
+company_intro / companyDescription
+tags / keywords / skills
+```
+
+导入后可以点击「批量分析岗位库」。系统会使用当前简历、个人记忆库和 GitHub 证据逐个分析岗位，并把结果写回岗位库：
+
+- `match_score`：岗位匹配度。
+- `fit_recommendation`：投递建议。
+- `fit_risks`：风险和缺口。
+- `fit_matched_points`：已匹配证据。
+- `suggested_resume_angle`：简历切入角度。
+
+页面底部的「Shortlist 总览」会按匹配度排序全部岗位，适合决定优先投递顺序，也可以下载 `shortlist.json` 作为求职记录。
 
 ## 工作流程
 

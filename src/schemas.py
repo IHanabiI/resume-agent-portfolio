@@ -55,10 +55,19 @@ class JobPosting(BaseModel):
     company: str = ""
     title: str = ""
     source_url: str = ""
+    platform: str = ""
+    location: str = ""
+    salary: str = ""
+    requirements_summary: str = ""
+    tags: list[str] = Field(default_factory=list)
     jd_text: str = ""
     status: Literal["已收藏", "待分析", "已分析", "已生成简历", "已投递", "面试中", "已拒绝", "已 offer", "放弃"] = "待分析"
     notes: str = ""
     match_score: int = Field(default=0, ge=0, le=100)
+    fit_recommendation: str = ""
+    fit_risks: list[str] = Field(default_factory=list)
+    fit_matched_points: list[str] = Field(default_factory=list)
+    suggested_resume_angle: str = ""
     last_resume_file: str = ""
     created_at: str = ""
     updated_at: str = ""
