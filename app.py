@@ -334,6 +334,9 @@ def render_input_section(modules) -> None:
         if not st.session_state.job_description.strip():
             st.error("请输入目标岗位 JD。")
             return
+        current_job = _upsert_current_job(modules)
+        if not current_job:
+            return
         try:
             with st.spinner("正在执行 LangGraph 分析工作流，完成后会在下方显示「3. 分析结果」..."):
                 st.session_state.analysis_state = modules["run_analysis"](
@@ -347,23 +350,23 @@ def render_input_section(modules) -> None:
                 st.session_state.cumulative_answers = []
                 st.session_state.question_round = 1
                 st.session_state.session_context_text = ""
-                if st.session_state.active_job_id:
-                    fit = st.session_state.analysis_state.get("job_fit_report")
-                    st.session_state.job_workspace = modules["update_job_status"](
-                        st.session_state.job_workspace,
-                        st.session_state.active_job_id,
-                        "已分析",
-                        fit.score if fit else None,
-                        fit_recommendation=fit.recommendation if fit else "",
-                        fit_risks=fit.risks if fit else None,
-                        fit_matched_points=fit.matched_points if fit else None,
-                        suggested_resume_angle=fit.suggested_resume_angle if fit else "",
-                    )
+                fit = st.session_state.analysis_state.get("job_fit_report")
+                st.session_state.job_workspace = modules["update_job_status"](
+                    st.session_state.job_workspace,
+                    st.session_state.active_job_id,
+                    "已分析",
+                    fit.score if fit else None,
+                    fit_recommendation=fit.recommendation if fit else "",
+                    fit_risks=fit.risks if fit else None,
+                    fit_matched_points=fit.matched_points if fit else None,
+                    suggested_resume_angle=fit.suggested_resume_angle if fit else "",
+                )
+                st.session_state.job_status = "已分析"
         except Exception:
             st.error("分析失败。请检查模型接口配置，或稍后重试。")
             st.code(traceback.format_exc(), language="python")
             return
-        st.success("分析完成。")
+        st.success("分析完成，并已写入岗位库。")
 
 
 def render_analysis_section(modules) -> None:
@@ -595,9 +598,17 @@ def _load_job_into_session(job) -> None:
 
 
 def _save_current_job(modules) -> None:
+    job = _upsert_current_job(modules)
+    if not job:
+        return
+    st.success("已保存岗位。")
+    st.rerun()
+
+
+def _upsert_current_job(modules):
     if not st.session_state.job_description.strip():
         st.error("请先填写岗位 JD。")
-        return
+        return None
     JobPosting = modules["JobPosting"]
     title = st.session_state.job_title.strip() or modules["infer_job_title_from_jd"](st.session_state.job_description)
     job = JobPosting(
@@ -613,8 +624,7 @@ def _save_current_job(modules) -> None:
     st.session_state.active_job_id = job.job_id
     st.session_state.job_workspace.active_job_id = job.job_id
     st.session_state.job_title = title
-    st.success("已保存岗位。")
-    st.rerun()
+    return job
 
 
 def _batch_analyze_jobs(modules) -> None:
