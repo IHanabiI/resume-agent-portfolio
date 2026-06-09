@@ -79,9 +79,56 @@ class JobWorkspace(BaseModel):
     jobs: list[JobPosting] = Field(default_factory=list)
 
 
+class ResumeQualityIssue(BaseModel):
+    severity: Literal["high", "medium", "low"] = "medium"
+    category: str = ""
+    location: str = ""
+    problem: str = ""
+    suggestion: str = ""
+
+
+class ResumeStarItem(BaseModel):
+    source_section: str = ""
+    title: str = ""
+    situation: str = ""
+    task: str = ""
+    action: str = ""
+    result: str = ""
+    skills: list[str] = Field(default_factory=list)
+    raw_text: str = ""
+    has_action: bool = False
+    has_result: bool = False
+    needs_metrics: bool = False
+
+
+class ResumeStarProfile(BaseModel):
+    resume_hash: str = ""
+    summary: str = ""
+    items: list[ResumeStarItem] = Field(default_factory=list)
+
+
+class ResumeQualityReport(BaseModel):
+    score: int = Field(default=0, ge=0, le=100)
+    status: Literal["weak", "usable", "strong"] = "weak"
+    summary: str = ""
+    evaluated_items: int = 0
+    empty_shell_items: list[str] = Field(default_factory=list)
+    missing_action_items: list[str] = Field(default_factory=list)
+    missing_result_items: list[str] = Field(default_factory=list)
+    missing_metric_items: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    issues: list[ResumeQualityIssue] = Field(default_factory=list)
+    recommended_fixes: list[str] = Field(default_factory=list)
+
+
 class JobFitReport(BaseModel):
     score: int = Field(default=0, ge=0, le=100)
+    hard_skills_score: int = Field(default=0, ge=0, le=100)
+    experience_depth_score: int = Field(default=0, ge=0, le=100)
+    domain_fit_score: int = Field(default=0, ge=0, le=100)
+    soft_fit_score: int = Field(default=0, ge=0, le=100)
     status: Literal["low", "medium", "high"] = "low"
+    one_liner: str = ""
     recommendation: str = ""
     matched_points: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)

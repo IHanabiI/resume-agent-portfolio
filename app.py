@@ -376,26 +376,38 @@ def render_analysis_section(modules) -> None:
     gap = state["gap_analysis"]
     sufficiency = state.get("sufficiency_report")
     fit = state.get("job_fit_report")
+    quality = state.get("resume_quality_report")
+    star = state.get("resume_star_profile")
 
     st.header("3. 分析结果")
     tabs = st.tabs(["岗位评估", "补充信息", "调试信息"])
     with tabs[0]:
         if fit:
-            metric_col1, metric_col2 = st.columns([1, 1])
+            metric_col1, metric_col2, metric_col3 = st.columns([1, 1, 1])
             with metric_col1:
                 st.metric("岗位匹配度", f"{fit.score}%")
             with metric_col2:
                 if sufficiency:
                     st.metric("信息完整度", f"{sufficiency.score}%")
+            with metric_col3:
+                if quality:
+                    st.metric("简历质量", f"{quality.score}%")
 
             st.subheader("一句话评估")
-            st.write(fit.recommendation)
+            st.write(fit.one_liner or fit.recommendation)
             if fit.status == "high":
                 st.success("建议优先投递。")
             elif fit.status == "medium":
                 st.info("可以投递，但建议先补充关键证据。")
             else:
                 st.warning("匹配度偏低，建议谨慎投递或补充更多事实。")
+
+            st.subheader("四维评分")
+            score_col1, score_col2, score_col3, score_col4 = st.columns(4)
+            score_col1.metric("硬技能", f"{fit.hard_skills_score}%")
+            score_col2.metric("经验深度", f"{fit.experience_depth_score}%")
+            score_col3.metric("领域契合", f"{fit.domain_fit_score}%")
+            score_col4.metric("软性匹配", f"{fit.soft_fit_score}%")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -421,6 +433,42 @@ def render_analysis_section(modules) -> None:
                         st.subheader("已有证据")
                         for item in sufficiency.enough_evidence or ["暂无明确证据。"]:
                             st.write(f"- {item}")
+
+            if quality:
+                with st.expander("简历质量体检", expanded=True):
+                    st.write(quality.summary)
+                    if quality.empty_shell_items:
+                        st.warning("存在空壳经历，建议优先补全。")
+                        for item in quality.empty_shell_items[:6]:
+                            st.write(f"- {item}")
+                    col5, col6 = st.columns(2)
+                    with col5:
+                        st.subheader("优势")
+                        for item in quality.strengths or ["暂无明确优势。"]:
+                            st.write(f"- {item}")
+                    with col6:
+                        st.subheader("建议修复")
+                        for item in quality.recommended_fixes or ["暂无建议。"]:
+                            st.write(f"- {item}")
+                    if quality.issues:
+                        st.subheader("问题清单")
+                        st.dataframe([item.model_dump() for item in quality.issues], use_container_width=True, hide_index=True)
+
+            if star:
+                with st.expander("STAR 候选经历", expanded=False):
+                    st.write(star.summary)
+                    rows = [
+                        {
+                            "区块": item.source_section,
+                            "经历": item.title,
+                            "有行动": item.has_action,
+                            "有结果": item.has_result,
+                            "缺量化": item.needs_metrics,
+                            "技能": "、".join(item.skills),
+                        }
+                        for item in star.items[:20]
+                    ]
+                    st.dataframe(rows, use_container_width=True, hide_index=True)
                     with col4:
                         st.subheader("建议补充")
                         for item in sufficiency.missing_evidence or ["暂无明显缺口。"]:
@@ -442,6 +490,12 @@ def render_analysis_section(modules) -> None:
             st.json(job.model_dump())
         with st.expander("候选人结构化结果", expanded=False):
             st.json(candidate.model_dump())
+        if quality:
+            with st.expander("简历质量报告", expanded=False):
+                st.json(quality.model_dump())
+        if star:
+            with st.expander("STAR Profile", expanded=False):
+                st.json(star.model_dump())
         with st.expander("完整分析状态", expanded=False):
             st.json(_json_safe_state(state))
 

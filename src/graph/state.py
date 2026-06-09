@@ -9,6 +9,8 @@ from src.schemas import (
     InformationSufficiencyReport,
     JobFitReport,
     JobAnalysis,
+    ResumeQualityReport,
+    ResumeStarProfile,
     TailoredResumeResult,
     UserAnswer,
 )
@@ -20,6 +22,8 @@ class ResumeAgentState(TypedDict, total=False):
     memory_text: str
     github_context: str
     candidate_profile: CandidateProfile
+    resume_quality_report: ResumeQualityReport
+    resume_star_profile: ResumeStarProfile
     job_analysis: JobAnalysis
     gap_analysis: GapAnalysis
     sufficiency_report: InformationSufficiencyReport
