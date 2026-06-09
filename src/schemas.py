@@ -50,6 +50,35 @@ class JobAnalysis(BaseModel):
     recruiter_focus: list[str] = Field(default_factory=list)
 
 
+class JobPosting(BaseModel):
+    job_id: str = ""
+    company: str = ""
+    title: str = ""
+    source_url: str = ""
+    jd_text: str = ""
+    status: Literal["已收藏", "待分析", "已分析", "已生成简历", "已投递", "面试中", "已拒绝", "已 offer", "放弃"] = "待分析"
+    notes: str = ""
+    match_score: int = Field(default=0, ge=0, le=100)
+    last_resume_file: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class JobWorkspace(BaseModel):
+    version: str = "1.0"
+    active_job_id: str = ""
+    jobs: list[JobPosting] = Field(default_factory=list)
+
+
+class JobFitReport(BaseModel):
+    score: int = Field(default=0, ge=0, le=100)
+    status: Literal["low", "medium", "high"] = "low"
+    recommendation: str = ""
+    matched_points: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    suggested_resume_angle: str = ""
+
+
 class QuestionItem(BaseModel):
     question: str = ""
     why_needed: str = ""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.agents.fact_checker_agent import fact_check_resume
 from src.agents.jd_analyzer_agent import analyze_jd
+from src.agents.job_fit_agent import assess_job_fit
 from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
 from src.agents.resume_parser_agent import parse_resume
@@ -51,7 +52,15 @@ def sufficiency_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("github_context", ""),
         state.get("user_answers", []),
     )
-    return {"sufficiency_report": report}
+    fit = assess_job_fit(
+        state["candidate_profile"],
+        state["job_analysis"],
+        state["gap_analysis"],
+        state["resume_text"],
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
+    )
+    return {"sufficiency_report": report, "job_fit_report": fit}
 
 
 def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:

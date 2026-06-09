@@ -7,6 +7,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from src.schemas import JobWorkspace
+
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,9 +24,17 @@ def load_app_modules():
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
     from src.graph.workflow import run_analysis, run_generation
+    from src.job_store import (
+        get_active_job,
+        infer_job_title_from_jd,
+        job_workspace_to_json_text,
+        parse_job_workspace_upload,
+        update_job_status,
+        upsert_job,
+    )
     from src.llm_client import pretty_json
     from src import memory_store
-    from src.schemas import MemoryFact, UserAnswer, UserMemory
+    from src.schemas import JobPosting, JobWorkspace, MemoryFact, UserAnswer, UserMemory
 
     parse_memory_upload = memory_store.parse_memory_upload
     curate_memory_candidates = getattr(memory_store, "curate_memory_candidates", lambda answers=None, github_context="": [])
@@ -72,6 +82,12 @@ def load_app_modules():
         "extract_text_from_upload": extract_text_from_upload,
         "collect_github_context": collect_github_context,
         "github_context_to_text": github_context_to_text,
+        "get_active_job": get_active_job,
+        "infer_job_title_from_jd": infer_job_title_from_jd,
+        "job_workspace_to_json_text": job_workspace_to_json_text,
+        "parse_job_workspace_upload": parse_job_workspace_upload,
+        "update_job_status": update_job_status,
+        "upsert_job": upsert_job,
         "run_analysis": run_analysis,
         "run_generation": run_generation,
         "pretty_json": pretty_json,
@@ -80,6 +96,8 @@ def load_app_modules():
         "memory_to_json_text": memory_to_json_text,
         "memory_to_text": memory_to_text,
         "parse_memory_upload": parse_memory_upload,
+        "JobPosting": JobPosting,
+        "JobWorkspace": JobWorkspace,
         "UserAnswer": UserAnswer,
     }
 
@@ -98,9 +116,18 @@ def init_state() -> None:
         "github_context": "",
         "memory_candidates": [],
         "session_context_text": "",
+        "job_workspace": None,
+        "active_job_id": "",
+        "job_company": "",
+        "job_title": "",
+        "job_source_url": "",
+        "job_notes": "",
+        "job_status": "待分析",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+    if st.session_state.job_workspace is None:
+        st.session_state.job_workspace = JobWorkspace()
 
 
 def main() -> None:
@@ -132,6 +159,7 @@ def main() -> None:
         st.warning("当前未配置 OPENAI_API_KEY，且未启用演示兜底。")
 
     render_context_section(modules)
+    render_job_workspace_section(modules)
     render_input_section(modules)
     if st.session_state.analysis_state:
         render_analysis_section(modules)
@@ -162,8 +190,103 @@ def check_access(app_password: str) -> bool:
     return False
 
 
+def render_job_workspace_section(modules) -> None:
+    st.header("1. 岗位库")
+    st.caption("这里保存目标岗位、JD、投递状态和备注。岗位库会导出为 job_workspace.json，不依赖数据库。")
+
+    workspace = st.session_state.job_workspace
+    upload = st.file_uploader("导入岗位库 JSON 或 JD 文本", type=["json", "txt"], key="job_workspace_upload")
+    if upload:
+        text = upload.getvalue().decode("utf-8", errors="ignore")
+        workspace = modules["parse_job_workspace_upload"](text)
+        st.session_state.job_workspace = workspace
+        active_job = modules["get_active_job"](workspace)
+        if active_job:
+            _load_job_into_session(active_job)
+        st.success("已导入岗位库。")
+
+    if workspace.jobs:
+        options = [job.job_id for job in workspace.jobs]
+        labels = {
+            job.job_id: f"{job.company or '未填写公司'} - {job.title or '未命名岗位'} [{job.status}]"
+            for job in workspace.jobs
+        }
+        current_id = st.session_state.active_job_id or workspace.active_job_id or options[0]
+        index = options.index(current_id) if current_id in options else 0
+        selected_id = st.selectbox(
+            "选择已保存岗位",
+            options=options,
+            index=index,
+            format_func=lambda job_id: labels.get(job_id, job_id),
+        )
+        col_load, col_delete = st.columns([1, 1])
+        with col_load:
+            if st.button("加载选中岗位到 JD 输入区"):
+                selected = _find_job(workspace, selected_id)
+                if selected:
+                    _load_job_into_session(selected)
+                    st.success("已加载岗位。")
+                    st.rerun()
+        with col_delete:
+            if st.button("删除选中岗位"):
+                workspace.jobs = [job for job in workspace.jobs if job.job_id != selected_id]
+                if workspace.active_job_id == selected_id:
+                    workspace.active_job_id = workspace.jobs[0].job_id if workspace.jobs else ""
+                st.session_state.job_workspace = workspace
+                st.session_state.active_job_id = workspace.active_job_id
+                st.success("已删除岗位。")
+                st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.job_company = st.text_input("公司名称", value=st.session_state.job_company)
+        st.session_state.job_title = st.text_input(
+            "岗位名称",
+            value=st.session_state.job_title,
+            placeholder="留空时会尝试从 JD 自动推断",
+        )
+    with col2:
+        st.session_state.job_source_url = st.text_input("岗位链接", value=st.session_state.job_source_url)
+        st.session_state.job_status = st.selectbox(
+            "投递状态",
+            ["已收藏", "待分析", "已分析", "已生成简历", "已投递", "面试中", "已拒绝", "已 offer", "放弃"],
+            index=["已收藏", "待分析", "已分析", "已生成简历", "已投递", "面试中", "已拒绝", "已 offer", "放弃"].index(
+                st.session_state.job_status if st.session_state.job_status in ["已收藏", "待分析", "已分析", "已生成简历", "已投递", "面试中", "已拒绝", "已 offer", "放弃"] else "待分析"
+            ),
+        )
+
+    st.session_state.job_notes = st.text_area("岗位备注", value=st.session_state.job_notes, height=90)
+
+    col_save, col_export = st.columns([1, 1])
+    with col_save:
+        if st.button("保存当前 JD 到岗位库", type="secondary"):
+            _save_current_job(modules)
+
+    with col_export:
+        st.download_button(
+            "下载岗位库 JSON",
+            data=modules["job_workspace_to_json_text"](st.session_state.job_workspace).encode("utf-8"),
+            file_name="job_workspace.json",
+            mime="application/json",
+        )
+
+    if st.session_state.job_workspace.jobs:
+        rows = [
+            {
+                "公司": job.company,
+                "岗位": job.title,
+                "状态": job.status,
+                "匹配度": f"{job.match_score}%" if job.match_score else "",
+                "链接": job.source_url,
+                "更新时间": job.updated_at,
+            }
+            for job in st.session_state.job_workspace.jobs
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def render_input_section(modules) -> None:
-    st.header("1. 输入材料")
+    st.header("2. 输入材料")
     left, right = st.columns(2)
     with left:
         uploaded = st.file_uploader("上传原始简历", type=["pdf", "docx", "txt"])
@@ -183,9 +306,16 @@ def render_input_section(modules) -> None:
     if job_description.strip():
         st.session_state.job_description = job_description.strip()
 
-    st.caption("点击“开始分析”后，结果会显示在本区域下方的「2. 分析结果」。如果需要最终简历，请在追问页点击「立刻生成定制简历」。")
+    st.caption("点击“开始分析”后，结果会显示在本区域下方的「3. 分析结果」。如果需要最终简历，请在追问页点击「立刻生成定制简历」。")
 
-    if st.button("开始分析", type="primary"):
+    action_col1, action_col2 = st.columns([1, 1])
+    with action_col1:
+        start_clicked = st.button("开始分析", type="primary")
+    with action_col2:
+        if st.button("保存当前 JD 到岗位库", key="save_jd_from_input"):
+            _save_current_job(modules)
+
+    if start_clicked:
         if not st.session_state.resume_text.strip():
             st.error("请上传或粘贴原始简历。")
             return
@@ -193,7 +323,7 @@ def render_input_section(modules) -> None:
             st.error("请输入目标岗位 JD。")
             return
         try:
-            with st.spinner("正在执行 LangGraph 分析工作流，完成后会在下方显示「2. 分析结果」..."):
+            with st.spinner("正在执行 LangGraph 分析工作流，完成后会在下方显示「3. 分析结果」..."):
                 st.session_state.analysis_state = modules["run_analysis"](
                     st.session_state.resume_text,
                     st.session_state.job_description,
@@ -205,6 +335,14 @@ def render_input_section(modules) -> None:
                 st.session_state.cumulative_answers = []
                 st.session_state.question_round = 1
                 st.session_state.session_context_text = ""
+                if st.session_state.active_job_id:
+                    fit = st.session_state.analysis_state.get("job_fit_report")
+                    st.session_state.job_workspace = modules["update_job_status"](
+                        st.session_state.job_workspace,
+                        st.session_state.active_job_id,
+                        "已分析",
+                        fit.score if fit else None,
+                    )
         except Exception:
             st.error("分析失败。请检查模型接口配置，或稍后重试。")
             st.code(traceback.format_exc(), language="python")
@@ -218,10 +356,35 @@ def render_analysis_section(modules) -> None:
     job = state["job_analysis"]
     gap = state["gap_analysis"]
     sufficiency = state.get("sufficiency_report")
+    fit = state.get("job_fit_report")
 
-    st.header("2. 分析结果")
-    tabs = st.tabs(["信息足够度", "岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
+    st.header("3. 分析结果")
+    tabs = st.tabs(["岗位匹配度", "信息足够度", "岗位分析", "候选人解析", "匹配与缺口", "追问问题"])
     with tabs[0]:
+        if fit:
+            st.metric("岗位匹配度", f"{fit.score}%")
+            st.write(fit.recommendation)
+            if fit.status == "high":
+                st.success("建议优先投递。")
+            elif fit.status == "medium":
+                st.info("可以投递，但建议先补充关键证据。")
+            else:
+                st.warning("匹配度偏低，建议谨慎投递或补充更多事实。")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("匹配点")
+                for item in fit.matched_points or ["暂无明确匹配点。"]:
+                    st.write(f"- {item}")
+            with col2:
+                st.subheader("风险")
+                for item in fit.risks or ["暂无明显风险。"]:
+                    st.write(f"- {item}")
+            st.subheader("简历切入角度")
+            st.write(fit.suggested_resume_angle or "围绕岗位关键词重排项目经历。")
+        else:
+            st.info("尚未生成岗位匹配度评估。")
+    with tabs[1]:
         if sufficiency:
             st.metric("当前信息足够度", f"{sufficiency.score}%")
             st.write(sufficiency.summary)
@@ -245,11 +408,11 @@ def render_analysis_section(modules) -> None:
                 st.write(f"- {item}")
         else:
             st.info("尚未生成信息足够度评估。")
-    with tabs[1]:
-        st.json(job.model_dump())
     with tabs[2]:
-        st.json(candidate.model_dump())
+        st.json(job.model_dump())
     with tabs[3]:
+        st.json(candidate.model_dump())
+    with tabs[4]:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("匹配优势")
@@ -259,7 +422,7 @@ def render_analysis_section(modules) -> None:
             st.subheader("缺失信息")
             for item in gap.missing_information or ["暂未识别到明显缺口。"]:
                 st.write(f"- {item}")
-    with tabs[4]:
+    with tabs[5]:
         render_questions(modules, gap.questions_to_user)
 
 
@@ -371,12 +534,67 @@ def render_questions(modules, questions) -> None:
                 full_md = modules["build_full_markdown"](tailored, fact_check)
                 modules["save_markdown"](full_md, modules["OUTPUT_DIR"])
                 modules["save_docx"](full_md, modules["OUTPUT_DIR"])
+                if st.session_state.active_job_id:
+                    fit = st.session_state.analysis_state.get("job_fit_report") if st.session_state.analysis_state else None
+                    st.session_state.job_workspace = modules["update_job_status"](
+                        st.session_state.job_workspace,
+                        st.session_state.active_job_id,
+                        "已生成简历",
+                        fit.score if fit else None,
+                        "tailored_resume.docx",
+                    )
             st.success("定制简历已生成。")
 
 
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _find_job(workspace, job_id: str):
+    for job in workspace.jobs:
+        if job.job_id == job_id:
+            return job
+    return None
+
+
+def _load_job_into_session(job) -> None:
+    st.session_state.active_job_id = job.job_id
+    st.session_state.job_workspace.active_job_id = job.job_id
+    st.session_state.job_company = job.company
+    st.session_state.job_title = job.title
+    st.session_state.job_source_url = job.source_url
+    st.session_state.job_notes = job.notes
+    st.session_state.job_status = job.status
+    st.session_state.job_description = job.jd_text
+    st.session_state.analysis_state = None
+    st.session_state.generation_state = None
+    st.session_state.cumulative_answers = []
+    st.session_state.session_context_text = ""
+    st.session_state.question_round = 1
+
+
+def _save_current_job(modules) -> None:
+    if not st.session_state.job_description.strip():
+        st.error("请先填写岗位 JD。")
+        return
+    JobPosting = modules["JobPosting"]
+    title = st.session_state.job_title.strip() or modules["infer_job_title_from_jd"](st.session_state.job_description)
+    job = JobPosting(
+        job_id=st.session_state.active_job_id,
+        company=st.session_state.job_company.strip(),
+        title=title,
+        source_url=st.session_state.job_source_url.strip(),
+        jd_text=st.session_state.job_description.strip(),
+        status=st.session_state.job_status,
+        notes=st.session_state.job_notes.strip(),
+    )
+    st.session_state.job_workspace = modules["upsert_job"](st.session_state.job_workspace, job)
+    st.session_state.active_job_id = job.job_id
+    st.session_state.job_workspace.active_job_id = job.job_id
+    st.session_state.job_title = title
+    st.success("已保存岗位。")
+    st.rerun()
 
 
 def _filter_repeated_questions(questions):
@@ -465,7 +683,7 @@ def render_generation_section(modules) -> None:
     fact_check = state["fact_check"]
     full_markdown = modules["build_full_markdown"](tailored, fact_check)
 
-    st.header("3. 生成结果")
+    st.header("4. 生成结果")
     tabs = st.tabs(["定制简历", "优化说明", "事实来源映射", "原始 JSON"])
     with tabs[0]:
         st.markdown(fact_check.final_resume_markdown or tailored.resume_markdown)

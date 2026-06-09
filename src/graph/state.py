@@ -7,6 +7,7 @@ from src.schemas import (
     FactCheckResult,
     GapAnalysis,
     InformationSufficiencyReport,
+    JobFitReport,
     JobAnalysis,
     TailoredResumeResult,
     UserAnswer,
@@ -22,6 +23,7 @@ class ResumeAgentState(TypedDict, total=False):
     job_analysis: JobAnalysis
     gap_analysis: GapAnalysis
     sufficiency_report: InformationSufficiencyReport
+    job_fit_report: JobFitReport
     user_answers: list[UserAnswer]
     tailored_resume: TailoredResumeResult
     fact_check: FactCheckResult
