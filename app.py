@@ -8,7 +8,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.schemas import JobWorkspace
+from src.requirement_classifier import soft_group_for_requirement
+from src.schemas import JobWorkspace, QuestionItem
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -602,10 +603,27 @@ def render_analysis_section(modules) -> None:
                         st.write(f"- {item}")
             with col2:
                 st.subheader("风险与缺口")
-                for item in fit.risks or ["暂无明显风险。"]:
+                general_risks = [
+                    item
+                    for item in fit.risks
+                    if not item.startswith("尚缺少这些硬技能")
+                    and not item.startswith("硬技能缺口")
+                    and not item.startswith("软性证据缺口")
+                    and not item.startswith("软性能力缺少")
+                ]
+                for item in general_risks or ["暂无明显风险。"]:
                     st.write(f"- {item}")
-                for item in gap.missing_information[:6]:
-                    st.write(f"- {item}")
+                if gap.hard_skill_gaps:
+                    st.markdown("**硬技能 / 方法缺口**")
+                    for item in gap.hard_skill_gaps[:6]:
+                        st.write(f"- 未找到「{item}」的明确经历或证据。")
+                if gap.soft_evidence_gaps:
+                    st.markdown("**软性能力证据缺口**")
+                    for item in gap.soft_evidence_gaps[:4]:
+                        st.write(f"- {item.requirement}：{item.evidence_needed}")
+                if not gap.hard_skill_gaps and not gap.soft_evidence_gaps:
+                    for item in gap.missing_information[:6]:
+                        st.write(f"- {item}")
 
             if sufficiency:
                 with st.expander("证据完整度", expanded=False):
@@ -665,12 +683,20 @@ def render_analysis_section(modules) -> None:
         st.write("先补充关键事实，或直接生成岗位交付材料。")
 
     with tabs[1]:
-        render_questions(modules, gap.questions_to_user)
+        render_questions(modules, gap)
 
 
-def render_questions(modules, questions) -> None:
+def render_questions(modules, gap) -> None:
     st.subheader("补充真实信息")
     st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
+    if gap.soft_evidence_gaps:
+        st.markdown("**优先补充软性能力的可验证场景**")
+        for item in gap.soft_evidence_gaps[:4]:
+            st.write(f"- {item.requirement}：{item.evidence_needed}")
+    if gap.hard_skill_gaps:
+        st.markdown("**硬技能 / 方法待确认**")
+        st.write("、".join(gap.hard_skill_gaps[:8]))
+    questions = _questions_for_display(gap)
     questions = _filter_repeated_questions(questions)
     if not questions:
         st.success("当前没有新的必须补充问题，可以直接生成岗位交付材料。")
@@ -1163,6 +1189,51 @@ def _filter_repeated_questions(questions):
         seen_current.add(key)
         filtered.append(question)
     return filtered
+
+
+def _questions_for_display(gap):
+    questions = []
+    seen_soft_groups = set()
+    seen_questions = set()
+
+    for item in getattr(gap, "soft_evidence_gaps", []) or []:
+        group_name = item.requirement.strip()
+        question_text = item.suggested_question.strip()
+        if not group_name or not question_text:
+            continue
+        key = group_name.lower()
+        if key in seen_soft_groups:
+            continue
+        seen_soft_groups.add(key)
+        questions.append(
+            QuestionItem(
+                question=question_text,
+                why_needed="软性能力不能只写标签，必须用具体经历证明，避免空泛表述。",
+                related_jd_requirement=group_name,
+            )
+        )
+
+    for question in getattr(gap, "questions_to_user", []) or []:
+        group = soft_group_for_requirement(question.related_jd_requirement) or soft_group_for_requirement(question.question)
+        if group:
+            group_name = str(group["name"])
+            key = group_name.lower()
+            if key in seen_soft_groups:
+                continue
+            seen_soft_groups.add(key)
+            questions.append(
+                QuestionItem(
+                    question=str(group["question"]),
+                    why_needed="软性能力不能只写标签，必须用具体经历证明，避免空泛表述。",
+                    related_jd_requirement=group_name,
+                )
+            )
+            continue
+        key = f"{question.related_jd_requirement.strip().lower()}::{question.question.strip().lower()}"
+        if question.question.strip() and key not in seen_questions:
+            seen_questions.add(key)
+            questions.append(question)
+    return questions
 
 
 def _question_key(text: str) -> str:

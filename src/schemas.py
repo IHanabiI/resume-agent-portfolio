@@ -148,9 +148,18 @@ class QuestionItem(BaseModel):
     related_jd_requirement: str = ""
 
 
+class SoftEvidenceGap(BaseModel):
+    requirement: str = ""
+    evidence_needed: str = ""
+    current_status: Literal["missing", "weak", "covered"] = "missing"
+    suggested_question: str = ""
+
+
 class GapAnalysis(BaseModel):
     matched_strengths: list[str] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
+    hard_skill_gaps: list[str] = Field(default_factory=list)
+    soft_evidence_gaps: list[SoftEvidenceGap] = Field(default_factory=list)
     questions_to_user: list[QuestionItem] = Field(default_factory=list)
 
 

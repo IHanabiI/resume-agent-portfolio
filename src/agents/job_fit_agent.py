@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from src.requirement_classifier import (
+    active_soft_groups,
+    filter_actionable_hard_requirements,
+    has_soft_evidence,
+    split_hard_and_soft_requirements,
+)
 from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, JobFitReport, ResumeQualityReport, ResumeStarProfile
 
 
@@ -14,9 +20,10 @@ def assess_job_fit(
     star_profile: ResumeStarProfile | None = None,
 ) -> JobFitReport:
     context = "\n".join([resume_text, memory_text, github_context] + candidate.skills).lower()
-    requirements = _unique(job.required_skills + job.keywords + job.recruiter_focus)
+    requirements, _ = split_hard_and_soft_requirements(_unique(job.required_skills + job.keywords + job.recruiter_focus))
+    requirements = filter_actionable_hard_requirements(requirements)
     covered = [item for item in requirements if item.lower() in context]
-    missing = [item for item in requirements if item.lower() not in context]
+    missing = gap.hard_skill_gaps or [item for item in requirements if item.lower() not in context]
 
     hard_skills_score = _score_hard_skills(covered, missing, job.preferred_skills, context)
     experience_depth_score = _score_experience_depth(candidate, resume_quality, star_profile, memory_text, github_context)
@@ -52,8 +59,13 @@ def assess_job_fit(
 
     risks = []
     if missing:
-        risks.append(f"尚缺少这些岗位关键词的明确证据：{', '.join(missing[:8])}")
-    risks.extend(gap.missing_information[:5])
+        risks.append(f"尚缺少这些硬技能/方法的明确证据：{', '.join(missing[:8])}")
+    if gap.soft_evidence_gaps:
+        soft_names = "、".join(item.requirement for item in gap.soft_evidence_gaps[:4] if item.requirement)
+        if soft_names:
+            risks.append(f"软性能力缺少可验证场景：{soft_names}")
+    elif gap.missing_information:
+        risks.extend(gap.missing_information[:3])
     if resume_quality:
         if resume_quality.empty_shell_items:
             risks.append(f"简历存在 {len(resume_quality.empty_shell_items)} 条空壳经历，生成前建议补全行动和结果。")
@@ -127,9 +139,17 @@ def _score_soft_fit(
     context: str,
     resume_quality: ResumeQualityReport | None,
 ) -> int:
-    focus = [item for item in job.recruiter_focus if item.strip()]
-    hits = [item for item in focus if item.lower() in context]
-    score = round(85 * len(hits) / max(1, len(focus))) if focus else 55
+    job_text = "\n".join([job.job_title, *job.core_responsibilities, *job.recruiter_focus, *job.keywords])
+    groups = active_soft_groups(job_text)
+    if groups:
+        covered = [group for group in groups if has_soft_evidence(group, context)]
+        score = round(90 * len(covered) / max(1, len(groups)))
+        if gap.soft_evidence_gaps:
+            score = min(score, 65)
+    else:
+        focus = [item for item in job.recruiter_focus if item.strip()]
+        hits = [item for item in focus if item.lower() in context]
+        score = round(85 * len(hits) / max(1, len(focus))) if focus else 55
     if gap.matched_strengths:
         score += min(15, len(gap.matched_strengths) * 3)
     if resume_quality and resume_quality.score >= 70:

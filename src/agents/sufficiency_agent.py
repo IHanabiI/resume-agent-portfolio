@@ -7,6 +7,7 @@ from src.schemas import (
     JobAnalysis,
     UserAnswer,
 )
+from src.requirement_classifier import filter_actionable_hard_requirements, split_hard_and_soft_requirements
 
 
 def assess_information_sufficiency(
@@ -28,7 +29,10 @@ def assess_information_sufficiency(
     ]
     available_sources = sum(1 for block in evidence_blocks if len(block) >= 40)
 
-    required_terms = _unique_terms(job.required_skills + job.keywords + job.recruiter_focus)
+    required_terms, _ = split_hard_and_soft_requirements(
+        _unique_terms(job.required_skills + job.keywords + job.recruiter_focus)
+    )
+    required_terms = filter_actionable_hard_requirements(required_terms)
     context = "\n".join(block for block in evidence_blocks if block).lower()
     covered_terms = [term for term in required_terms if term.lower() in context]
 
@@ -36,7 +40,8 @@ def assess_information_sufficiency(
     source_score = min(25, available_sources * 7)
     coverage_score = round(45 * coverage_ratio)
     profile_score = _profile_score(candidate)
-    gap_penalty = min(25, len(gap.missing_information) * 4)
+    structured_gap_count = len(gap.hard_skill_gaps) + len(gap.soft_evidence_gaps)
+    gap_penalty = min(25, max(len(gap.missing_information), structured_gap_count) * 4)
     question_penalty = min(15, len(gap.questions_to_user) * 3)
     score = max(0, min(100, source_score + coverage_score + profile_score - gap_penalty - question_penalty))
 

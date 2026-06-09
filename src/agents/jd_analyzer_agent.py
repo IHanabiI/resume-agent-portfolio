@@ -4,13 +4,15 @@ import re
 
 from src.config import load_prompt
 from src.llm_client import LLMClient
+from src.requirement_classifier import is_soft_requirement
 from src.schemas import JobAnalysis
 
 
 COMMON_SKILLS = [
     "Python", "SQL", "Excel", "Tableau", "Power BI", "机器学习", "数据分析", "Streamlit",
     "LangGraph", "OpenAI", "Pydantic", "Java", "JavaScript", "TypeScript", "React",
-    "Vue", "Docker", "Kubernetes", "Linux", "沟通", "协作", "项目管理", "A/B测试",
+    "Vue", "Docker", "Kubernetes", "Linux", "A/B测试", "Unity", "Unreal", "UE", "Godot",
+    "配置表", "数值", "玩法设计", "关卡设计", "系统设计", "战斗设计", "竞品分析",
 ]
 
 
@@ -34,7 +36,7 @@ def _fallback_analyze_jd(text: str) -> JobAnalysis:
         if any(k in line for k in ["岗位", "职位", "招聘", "工程师", "分析师", "经理"]):
             title = re.sub(r"^(岗位名称|岗位|职位|招聘)[:：]?", "", line).strip()
             break
-    skills = [skill for skill in COMMON_SKILLS if skill.lower() in text.lower()]
+    skills = [skill for skill in COMMON_SKILLS if skill.lower() in text.lower() and not is_soft_requirement(skill)]
     responsibilities = [line for line in lines if any(k in line for k in ["负责", "参与", "完成", "建设", "分析", "优化"])]
     preferred = [line for line in lines if any(k in line for k in ["加分", "优先", "最好", "熟悉"])]
     focus = [line for line in lines if any(k in line for k in ["要求", "能力", "经验", "关注"])]
@@ -50,5 +52,8 @@ def _fallback_analyze_jd(text: str) -> JobAnalysis:
 
 
 def _extract_cn_keywords(text: str) -> list[str]:
-    candidates = ["数据", "用户", "增长", "业务", "产品", "模型", "自动化", "报表", "指标", "需求", "交付"]
+    candidates = [
+        "数据", "用户", "增长", "业务", "产品", "模型", "自动化", "报表", "指标", "需求", "交付",
+        "玩法", "关卡", "系统", "战斗", "怪物", "活动", "配置", "文档", "竞品", "玩家", "反馈",
+    ]
     return [word for word in candidates if word in text]

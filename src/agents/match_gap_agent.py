@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
-from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, QuestionItem, UserAnswer
+from src.requirement_classifier import (
+    active_soft_groups,
+    filter_actionable_hard_requirements,
+    has_soft_evidence,
+    is_soft_requirement,
+    soft_group_for_requirement,
+    split_hard_and_soft_requirements,
+)
+from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, QuestionItem, SoftEvidenceGap, UserAnswer
 
 
 def analyze_match_and_gap(
@@ -27,7 +35,7 @@ def analyze_match_and_gap(
         ),
         GapAnalysis,
     )
-    return result or _fallback_gap(candidate, job, context)
+    return _normalize_gap(result or _fallback_gap(candidate, job, context), candidate, job, context)
 
 
 def _build_context(
@@ -56,14 +64,42 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
     context_blob = " ".join([context] + candidate.skills).lower()
     matched: list[str] = []
     missing: list[str] = []
+    hard_gaps: list[str] = []
+    soft_gaps: list[SoftEvidenceGap] = []
     questions: list[QuestionItem] = []
 
-    requirements = [item for item in job.required_skills + job.keywords[:10] if item]
+    requirements, _ = split_hard_and_soft_requirements(job.required_skills + job.keywords[:12])
+    requirements = filter_actionable_hard_requirements(requirements)
+    job_text = _job_text(job)
+
+    for group in active_soft_groups(job_text):
+        name = str(group["name"])
+        if has_soft_evidence(group, context_blob):
+            matched.append(f"已有与「{name}」相关的事实线索，可用于证明 JD 中的软性能力要求。")
+            continue
+        soft_gap = SoftEvidenceGap(
+            requirement=name,
+            evidence_needed=str(group["evidence_needed"]),
+            current_status="missing",
+            suggested_question=str(group["question"]),
+        )
+        soft_gaps.append(soft_gap)
+        missing.append(f"软性证据缺口：JD 强调「{name}」，但当前材料缺少可验证场景。建议补充：{soft_gap.evidence_needed}")
+        if len(questions) < 3:
+            questions.append(
+                QuestionItem(
+                    question=soft_gap.suggested_question,
+                    why_needed="软性能力不能只写标签，必须用具体经历证明，避免空泛表述。",
+                    related_jd_requirement=name,
+                )
+            )
+
     for skill in requirements:
         if skill.lower() in context_blob:
             matched.append(f"在现有事实来源中找到了与「{skill}」相关的信息，可作为岗位匹配点。")
         else:
-            missing.append(f"未找到「{skill}」的明确经历或证据。")
+            hard_gaps.append(skill)
+            missing.append(f"硬技能缺口：未找到「{skill}」的明确经历或证据。")
             if len(questions) < 5:
                 questions.append(
                     QuestionItem(
@@ -94,9 +130,47 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
         )
 
     return GapAnalysis(
+        matched_strengths=_dedupe(matched)[:8],
+        missing_information=_dedupe(missing)[:8],
+        hard_skill_gaps=_dedupe(hard_gaps)[:8],
+        soft_evidence_gaps=soft_gaps[:6],
+        questions_to_user=_dedupe_questions(questions)[:5],
+    )
+
+
+def _normalize_gap(gap: GapAnalysis, candidate: CandidateProfile, job: JobAnalysis, context: str) -> GapAnalysis:
+    fallback = _fallback_gap(candidate, job, context)
+    hard_gaps = filter_actionable_hard_requirements(_dedupe(gap.hard_skill_gaps + fallback.hard_skill_gaps))
+    soft_gaps = _merge_soft_gaps(gap.soft_evidence_gaps, fallback.soft_evidence_gaps)
+
+    legacy_missing = [
+        item
+        for item in gap.missing_information
+        if not _looks_like_soft_keyword_missing(item)
+    ]
+    missing = _dedupe(legacy_missing + fallback.missing_information)
+    questions = _dedupe_questions(fallback.questions_to_user + _filter_legacy_soft_questions(gap.questions_to_user))
+    matched = _dedupe(gap.matched_strengths + fallback.matched_strengths)
+
+    return GapAnalysis(
         matched_strengths=matched[:8],
         missing_information=missing[:8],
+        hard_skill_gaps=hard_gaps[:8],
+        soft_evidence_gaps=soft_gaps[:6],
         questions_to_user=questions[:5],
+    )
+
+
+def _job_text(job: JobAnalysis) -> str:
+    return "\n".join(
+        [
+            job.job_title,
+            *job.core_responsibilities,
+            *job.required_skills,
+            *job.preferred_skills,
+            *job.keywords,
+            *job.recruiter_focus,
+        ]
     )
 
 
@@ -115,3 +189,72 @@ def _has_metric_context(context: str) -> bool:
     has_number = digit_count >= 2 or any(term in lowered for term in ["w", "万", "百", "千"])
     has_metric_word = any(term in lowered for term in metric_terms)
     return has_number and (has_metric_word or digit_count >= 3)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        value = item.strip()
+        key = value.lower()
+        if value and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+def _dedupe_questions(questions: list[QuestionItem]) -> list[QuestionItem]:
+    seen: set[str] = set()
+    result: list[QuestionItem] = []
+    for question in questions:
+        key = f"{question.related_jd_requirement.strip().lower()}::{question.question.strip().lower()}"
+        if question.question.strip() and key not in seen:
+            seen.add(key)
+            result.append(question)
+    return result
+
+
+def _filter_legacy_soft_questions(questions: list[QuestionItem]) -> list[QuestionItem]:
+    result: list[QuestionItem] = []
+    seen_soft_groups: set[str] = set()
+    for question in questions:
+        requirement = question.related_jd_requirement.strip()
+        text = question.question.strip()
+        if not requirement and not text:
+            continue
+        group = soft_group_for_requirement(requirement) or soft_group_for_requirement(text)
+        if group:
+            name = str(group["name"])
+            if name in seen_soft_groups:
+                continue
+            seen_soft_groups.add(name)
+            result.append(
+                QuestionItem(
+                    question=str(group["question"]),
+                    why_needed="软性能力不能只写标签，必须用具体经历证明，避免空泛表述。",
+                    related_jd_requirement=name,
+                )
+            )
+            continue
+        if is_soft_requirement(requirement) or _looks_like_legacy_generic_soft_question(text):
+            continue
+        result.append(question)
+    return result
+
+
+def _merge_soft_gaps(primary: list[SoftEvidenceGap], fallback: list[SoftEvidenceGap]) -> list[SoftEvidenceGap]:
+    by_key: dict[str, SoftEvidenceGap] = {}
+    for gap in primary + fallback:
+        key = gap.requirement.strip().lower()
+        if key and key not in by_key:
+            by_key[key] = gap
+    return list(by_key.values())
+
+
+def _looks_like_soft_keyword_missing(text: str) -> bool:
+    soft_terms = ["沟通", "协作", "团队", "逻辑", "表达", "主动", "推动", "用户体验", "反馈", "细节"]
+    return text.startswith("未找到") and any(term in text for term in soft_terms)
+
+
+def _looks_like_legacy_generic_soft_question(text: str) -> bool:
+    return text.startswith("JD 提到") and any(term in text for term in ["沟通", "协作", "团队", "逻辑", "表达", "用户体验", "反馈", "细节"])
