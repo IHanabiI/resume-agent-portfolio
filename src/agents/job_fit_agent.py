@@ -19,11 +19,11 @@ def assess_job_fit(
     resume_quality: ResumeQualityReport | None = None,
     star_profile: ResumeStarProfile | None = None,
 ) -> JobFitReport:
-    context = "\n".join([resume_text, memory_text, github_context] + candidate.skills).lower()
+    context = _build_evidence_context(candidate, resume_text, memory_text, github_context, resume_quality, star_profile)
     requirements, _ = split_hard_and_soft_requirements(_unique(job.required_skills + job.keywords + job.recruiter_focus))
     requirements = filter_actionable_hard_requirements(requirements)
-    covered = [item for item in requirements if item.lower() in context]
-    missing = gap.hard_skill_gaps or [item for item in requirements if item.lower() not in context]
+    covered = [item for item in requirements if _contains_requirement(context, item)]
+    missing = gap.hard_skill_gaps or [item for item in requirements if not _contains_requirement(context, item)]
 
     hard_skills_score = _score_hard_skills(covered, missing, job.preferred_skills, context)
     experience_depth_score = _score_experience_depth(candidate, resume_quality, star_profile, memory_text, github_context)
@@ -96,8 +96,44 @@ def assess_job_fit(
 def _score_hard_skills(covered: list[str], missing: list[str], preferred: list[str], context: str) -> int:
     total = len(covered) + len(missing)
     base = round(100 * len(covered) / max(1, total))
-    bonus = sum(5 for item in preferred if item and item.lower() in context)
+    bonus = sum(5 for item in preferred if item and _contains_requirement(context, item))
     return max(0, min(100, base + bonus))
+
+
+def _build_evidence_context(
+    candidate: CandidateProfile,
+    resume_text: str,
+    memory_text: str,
+    github_context: str,
+    resume_quality: ResumeQualityReport | None,
+    star_profile: ResumeStarProfile | None,
+) -> str:
+    parts: list[str] = []
+    parts.extend(candidate.skills)
+
+    if star_profile and star_profile.items:
+        for item in star_profile.items:
+            parts.extend([item.raw_text, item.action, item.result])
+            parts.extend(item.skills)
+    elif not resume_quality or resume_quality.evaluated_items > 0:
+        parts.extend(candidate.achievements)
+        for exp in candidate.work_experience:
+            parts.extend([exp.company, exp.title, exp.period])
+            parts.extend(exp.responsibilities)
+            parts.extend(exp.achievements)
+        for project in candidate.projects:
+            parts.extend([project.name, project.role, project.period, project.description])
+            parts.extend(project.technologies)
+            parts.extend(project.achievements)
+        parts.append(resume_text)
+
+    parts.extend([memory_text, github_context])
+    return "\n".join(part for part in parts if part and part.strip()).lower()
+
+
+def _contains_requirement(context: str, requirement: str) -> bool:
+    value = requirement.strip().lower()
+    return bool(value) and value in context
 
 
 def _score_experience_depth(
