@@ -74,7 +74,7 @@ def _fallback_fact_check(
                 )
             )
 
-    final_markdown = _remove_unverified_lines(result.resume_markdown, needs_confirmation)
+    final_markdown = _remove_unverified_lines(result.resume_markdown, needs_confirmation, source_items)
 
     return FactCheckResult(
         final_resume_markdown=final_markdown,
@@ -100,13 +100,17 @@ def _find_source(claim: str, sources: list[tuple[str, str]]) -> tuple[str, str]:
     return "none", ""
 
 
-def _remove_unverified_lines(markdown: str, claims: list[str]) -> str:
+def _remove_unverified_lines(markdown: str, claims: list[str], sources: list[tuple[str, str]]) -> str:
     if not claims:
         return markdown
     claim_tokens = [_important_tokens(claim) for claim in claims]
     kept: list[str] = []
     for line in markdown.splitlines():
         if line.lstrip().startswith("- ") and _line_matches_claim(line, claim_tokens):
+            source_type, _matched_source = _find_source(line.lstrip("- ").strip(), sources)
+            if source_type != "none":
+                kept.append(line)
+                continue
             continue
         kept.append(line)
     return "\n".join(kept).strip()
