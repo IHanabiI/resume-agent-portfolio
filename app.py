@@ -341,7 +341,25 @@ def render_resume_quality_summary(quality) -> None:
     col3.metric("空壳经历", len(quality.empty_shell_items))
     st.write(quality.summary)
     if quality.empty_shell_items:
-        st.warning("存在空壳经历，建议先补全再生成正式投递版本。")
+        st.warning(
+            "重要提醒：存在空壳工作/项目经历。它们会被 STAR 评估跳过，"
+            "AI 也不会替你编造内容；补全这些经历通常比直接改写更重要。"
+        )
+        with st.expander("空壳经历补全模板", expanded=False):
+            st.markdown(
+                "\n".join(
+                    [
+                        "请优先补全这些经历：",
+                        *[f"- {item}" for item in quality.empty_shell_items[:6]],
+                        "",
+                        "建议按这个结构补：",
+                        "1. 当时的场景/目标是什么？",
+                        "2. 你具体做了什么？用了什么方法、工具或流程？",
+                        "3. 交付了什么产物？",
+                        "4. 有什么结果、反馈、规模或可确认数字？没有数字可以明确说没有。",
+                    ]
+                )
+            )
     with st.expander("查看修复建议", expanded=False):
         for item in quality.recommended_fixes:
             st.write(f"- {item}")
@@ -713,6 +731,11 @@ def render_questions(modules, gap, quality=None) -> None:
     st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
     quality = quality or (st.session_state.analysis_state or {}).get("resume_quality_report")
     resume_quality_questions = _resume_quality_questions(quality)
+    if quality and getattr(quality, "empty_shell_items", []):
+        st.error(
+            "重要提醒：你有空壳经历只有标题、时间或组织信息，没有行动和结果。"
+            "这些内容无法被系统优化成有效简历经历；建议优先回答下面的空壳经历问题。"
+        )
     if resume_quality_questions:
         st.markdown("**优先补全简历质量问题**")
         for question in resume_quality_questions[:3]:
@@ -1405,10 +1428,11 @@ def _resume_quality_questions(quality):
             QuestionItem(
                 question=(
                     f"简历中这段经历目前只有标题或背景，缺少具体内容：「{item}」。"
-                    "请补充你实际做了什么、怎么做、交付了什么、最后产生了什么结果；"
-                    "如果这段经历不想写入简历，请回答“跳过”。"
+                    "请按 4 点补充：1）当时的场景/目标；2）你具体做了什么，使用了什么方法、工具或流程；"
+                    "3）交付了什么产物；4）产生了什么结果、反馈、规模或可确认数字。"
+                    "没有数字可以说明“没有可确认数字”；如果这段经历不想写入简历，请回答“跳过”。"
                 ),
-                why_needed="空壳经历会被参考项目式 STAR 评估跳过，补全后才能用于岗位匹配和定制简历。",
+                why_needed="空壳经历会被参考项目式 STAR/PAR 评估跳过，补全后才能用于岗位匹配和定制简历；AI 不会替你编造经历。",
                 related_jd_requirement=label,
             )
         )
