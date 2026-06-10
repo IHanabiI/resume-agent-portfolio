@@ -12,6 +12,7 @@ INTERNAL_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 CODE_FENCE_RE = re.compile(r"^\s*```(?:markdown|md|json)?\s*$", re.IGNORECASE)
+DATE_RE = re.compile(r"(\d{4}[./年-]\d{1,2}|20\d{2}|19\d{2}|至今|present)", re.IGNORECASE)
 
 FORBIDDEN_SECTION_TERMS = [
     "待确认信息",
@@ -153,6 +154,13 @@ def _clean_lines(lines: list[str], warnings: list[str]) -> list[str]:
             warnings.append(f"已将过深标题改为普通列表项：{text[:40]}")
             continue
 
+        if heading and len(heading.group(1)) == 3:
+            text = heading.group(2).strip()
+            if _looks_like_detail_heading(text):
+                cleaned.append(f"- {text}")
+                warnings.append(f"已将疑似职责/成果标题改为普通列表项：{text[:40]}")
+                continue
+
         cleaned.append(stripped)
     return cleaned
 
@@ -264,6 +272,36 @@ def _is_forbidden_title(title: str, original_titles: set[str]) -> bool:
     if hard_forbidden:
         return True
     return any(term.lower().replace(" ", "") in normalized for term in FORBIDDEN_SECTION_TERMS)
+
+
+def _looks_like_detail_heading(text: str) -> bool:
+    if len(text) < 16:
+        return False
+    if DATE_RE.search(text):
+        return False
+    action_prefixes = (
+        "负责",
+        "参与",
+        "主导",
+        "设计",
+        "输出",
+        "完成",
+        "推动",
+        "协作",
+        "整理",
+        "分析",
+        "优化",
+        "实现",
+        "搭建",
+        "基于",
+        "通过",
+        "使用",
+    )
+    result_terms = ("提升", "降低", "增长", "上线", "交付", "验证", "反馈", "完成", "产出")
+    has_sentence_punctuation = any(mark in text for mark in ("，", "。", "；", "：", ",", ";", ":"))
+    starts_with_action = text.startswith(action_prefixes)
+    has_result = any(term in text for term in result_terms)
+    return starts_with_action or (len(text) >= 24 and (has_sentence_punctuation or has_result))
 
 
 def _original_titles(original_structure: ResumeStructure | None) -> set[str]:
