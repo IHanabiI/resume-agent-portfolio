@@ -506,7 +506,7 @@ def render_input_section(modules) -> None:
                 st.session_state.resume_template_docx_bytes_b64 = ""
             st.success(f"已读取文件：{uploaded.name}")
             if st.session_state.resume_template_docx_name:
-                st.caption(f"已保存原始 DOCX 模板：{st.session_state.resume_template_docx_name}。最终可下载尽量保留模板和照片的 DOCX。")
+                st.caption(f"已保存原始 DOCX 模板：{st.session_state.resume_template_docx_name}。最终可下载保留照片/页眉页脚、正文重新排版的 DOCX。")
         except Exception as exc:
             st.error(f"文件解析失败：{exc}")
     elif pasted_resume.strip():
@@ -1661,7 +1661,7 @@ def render_generation_section(modules) -> None:
             "上传原始 DOCX 模板用于模板版导出",
             type=["docx"],
             key="resume_template_docx_uploader",
-            help="如果原始简历是 DOCX，系统会尽量沿用它的样式、表格和照片，再写入微调后的简历正文。",
+            help="如果原始简历是 DOCX，系统会尽量保留照片、页眉页脚等模板外壳，并用统一简历样式重新排版正文。",
         )
         if template_upload:
             _store_resume_template_docx(template_upload.name, template_upload.getvalue())
@@ -1670,9 +1670,9 @@ def render_generation_section(modules) -> None:
 
         template_bytes = _get_resume_template_docx_bytes()
         if template_bytes:
-            st.caption(f"模板版 DOCX 将基于 `{st.session_state.resume_template_docx_name}` 生成，尽量保留原模板、照片、页眉页脚和表格结构。")
+            st.caption(f"模板版 DOCX 将基于 `{st.session_state.resume_template_docx_name}` 生成：保留照片/页眉页脚等模板外壳，正文使用统一简历排版，避免旧模板标题样式污染正文。")
         else:
-            st.caption("普通 DOCX 是重新排版版本，不会保留原始模板和照片；如需保留，请上传原始 DOCX 模板。")
+            st.caption("普通 DOCX 是重新排版版本，不会保留原始照片或页眉页脚；如需保留，请上传原始 DOCX 模板。")
 
         col_md, col_docx, col_template_docx = st.columns(3)
         with col_md:

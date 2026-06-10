@@ -6,7 +6,8 @@ from typing import Iterable
 
 from docx import Document
 from docx.document import Document as DocumentObject
-from docx.shared import Pt
+from docx.enum.text import WD_LINE_SPACING
+from docx.shared import Pt, RGBColor
 from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 from docx.oxml.table import CT_Tbl
@@ -15,31 +16,9 @@ from docx.oxml.text.paragraph import CT_P
 
 def markdown_to_docx_bytes(markdown_text: str) -> bytes:
     doc = Document()
-    style = doc.styles["Normal"]
-    style.font.name = "Microsoft YaHei"
-    style.font.size = Pt(10.5)
-
-    for raw_line in markdown_text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            doc.add_paragraph("")
-            continue
-        if line.startswith("# "):
-            doc.add_heading(line[2:].strip(), level=1)
-        elif line.startswith("## "):
-            doc.add_heading(line[3:].strip(), level=2)
-        elif line.startswith("### "):
-            doc.add_heading(line[4:].strip(), level=3)
-        elif line.startswith("- "):
-            doc.add_paragraph(line[2:].strip(), style="List Bullet")
-        elif line.startswith("|"):
-            doc.add_paragraph(line)
-        else:
-            doc.add_paragraph(line)
-
-    stream = BytesIO()
-    doc.save(stream)
-    return stream.getvalue()
+    _apply_resume_base_styles(doc)
+    _append_markdown_resume(doc, markdown_text)
+    return _docx_to_bytes(doc)
 
 
 def markdown_to_template_docx_bytes(markdown_text: str, template_bytes: bytes) -> bytes:
@@ -52,29 +31,12 @@ def markdown_to_template_docx_bytes(markdown_text: str, template_bytes: bytes) -
     """
 
     doc = Document(BytesIO(template_bytes))
-    lines = _markdown_to_resume_lines(markdown_text)
-    if not lines:
+    if not markdown_text.strip():
         return _docx_to_bytes(doc)
 
-    targets = [paragraph for paragraph in _iter_paragraphs(doc) if paragraph.text.strip()]
-
-    if not targets:
-        for item in lines:
-            _append_line(doc, item)
-        return _docx_to_bytes(doc)
-
-    line_index = 0
-    for paragraph in targets:
-        if line_index >= len(lines):
-            _replace_paragraph_text(paragraph, "")
-            continue
-        _replace_paragraph_text(paragraph, lines[line_index]["text"])
-        _apply_basic_markdown_style(paragraph, lines[line_index]["kind"])
-        line_index += 1
-
-    for item in lines[line_index:]:
-        _append_line(doc, item)
-
+    _apply_resume_base_styles(doc)
+    _clear_template_body_keep_media(doc)
+    _append_markdown_resume(doc, markdown_text)
     return _docx_to_bytes(doc)
 
 
@@ -85,28 +47,93 @@ def save_docx(markdown_text: str, output_dir: Path, filename: str = "tailored_re
     return path
 
 
-def _markdown_to_resume_lines(markdown_text: str) -> list[dict[str, str]]:
-    lines: list[dict[str, str]] = []
+def _apply_resume_base_styles(doc: DocumentObject) -> None:
+    section = doc.sections[0]
+    section.top_margin = Pt(36)
+    section.bottom_margin = Pt(36)
+    section.left_margin = Pt(45)
+    section.right_margin = Pt(45)
+
+    style = doc.styles["Normal"]
+    style.font.name = "Microsoft YaHei"
+    style.font.size = Pt(9.5)
+    paragraph_format = style.paragraph_format
+    paragraph_format.space_before = Pt(0)
+    paragraph_format.space_after = Pt(2)
+    paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+
+
+def _append_markdown_resume(doc: DocumentObject, markdown_text: str) -> None:
     for raw_line in markdown_text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        kind = "paragraph"
-        text = line
         if line.startswith("### "):
-            kind = "heading"
-            text = line[4:].strip()
+            _append_heading(doc, _clean_inline_markdown(line[4:].strip()), level=3)
         elif line.startswith("## "):
-            kind = "heading"
-            text = line[3:].strip()
+            _append_heading(doc, _clean_inline_markdown(line[3:].strip()), level=2)
         elif line.startswith("# "):
-            kind = "heading"
-            text = line[2:].strip()
+            _append_heading(doc, _clean_inline_markdown(line[2:].strip()), level=1)
         elif line.startswith("- "):
-            kind = "bullet"
-            text = f"- {line[2:].strip()}"
-        lines.append({"kind": kind, "text": text})
-    return lines
+            _append_bullet(doc, line[2:].strip())
+        elif line.startswith("* "):
+            _append_bullet(doc, line[2:].strip())
+        elif line.startswith("|"):
+            _append_paragraph(doc, _clean_inline_markdown(line))
+        else:
+            _append_paragraph(doc, line)
+
+
+def _append_heading(doc: DocumentObject, text: str, level: int) -> None:
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.space_before = Pt(6 if level <= 2 else 3)
+    paragraph.paragraph_format.space_after = Pt(2)
+    run = paragraph.add_run(text)
+    run.bold = True
+    run.font.name = "Microsoft YaHei"
+    run.font.color.rgb = RGBColor(31, 41, 55)
+    run.font.size = Pt(14 if level == 1 else 11 if level == 2 else 10)
+
+
+def _append_bullet(doc: DocumentObject, text: str) -> None:
+    paragraph = doc.add_paragraph(style="List Bullet")
+    paragraph.paragraph_format.left_indent = Pt(12)
+    paragraph.paragraph_format.first_line_indent = Pt(-6)
+    paragraph.paragraph_format.space_after = Pt(1)
+    _append_inline_runs(paragraph, text)
+
+
+def _append_paragraph(doc: DocumentObject, text: str) -> None:
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.space_after = Pt(1.5)
+    _append_inline_runs(paragraph, text)
+
+
+def _append_inline_runs(paragraph: Paragraph, text: str) -> None:
+    text = text.replace("**", "__")
+    parts = text.split("__")
+    for index, part in enumerate(parts):
+        if not part:
+            continue
+        run = paragraph.add_run(_clean_inline_markdown(part))
+        run.font.name = "Microsoft YaHei"
+        run.font.size = Pt(9.5)
+        run.bold = index % 2 == 1
+
+
+def _clean_inline_markdown(text: str) -> str:
+    return text.replace("`", "").replace("**", "").strip()
+
+
+def _clear_template_body_keep_media(doc: DocumentObject) -> None:
+    body = doc.element.body
+    for child in list(body.iterchildren()):
+        if child.tag.endswith("sectPr"):
+            continue
+        if _element_has_media(child):
+            _clear_text_in_element(child)
+            continue
+        body.remove(child)
 
 
 def _iter_paragraphs(parent: DocumentObject | _Cell) -> Iterable[Paragraph]:
@@ -125,43 +152,17 @@ def _iter_paragraphs(parent: DocumentObject | _Cell) -> Iterable[Paragraph]:
                     yield from _iter_paragraphs(cell)
 
 
-def _paragraph_has_media(paragraph: Paragraph) -> bool:
+def _element_has_media(element) -> bool:
     return bool(
-        paragraph._p.xpath(".//w:drawing")
-        or paragraph._p.xpath(".//w:pict")
-        or paragraph._p.xpath(".//a:blip")
+        element.xpath(".//w:drawing")
+        or element.xpath(".//w:pict")
+        or element.xpath(".//a:blip")
     )
 
 
-def _replace_paragraph_text(paragraph: Paragraph, text: str) -> None:
-    has_media = _paragraph_has_media(paragraph)
-    for run in paragraph.runs:
-        run.text = ""
-    if text:
-        if paragraph.runs and not has_media:
-            paragraph.runs[0].text = text
-        else:
-            paragraph.add_run(text)
-
-
-def _apply_basic_markdown_style(paragraph: Paragraph, kind: str) -> None:
-    if not paragraph.runs:
-        return
-    if kind == "heading":
-        paragraph.runs[-1].bold = True
-    elif kind == "bullet":
-        paragraph.runs[-1].bold = False
-
-
-def _append_line(doc: DocumentObject, item: dict[str, str]) -> None:
-    if item["kind"] == "heading":
-        paragraph = doc.add_paragraph()
-        run = paragraph.add_run(item["text"])
-        run.bold = True
-    elif item["kind"] == "bullet":
-        doc.add_paragraph(item["text"], style="List Bullet")
-    else:
-        doc.add_paragraph(item["text"])
+def _clear_text_in_element(element) -> None:
+    for text_node in element.xpath(".//w:t"):
+        text_node.text = ""
 
 
 def _docx_to_bytes(doc: DocumentObject) -> bytes:

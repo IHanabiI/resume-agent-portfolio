@@ -58,6 +58,13 @@ def _fallback_write(
     for item in strengths[:5]:
         lines.append(f"- {item}")
 
+    answered = [
+        a for a in user_answers
+        if a.answer.strip() and a.answer.strip().lower() not in {"没有", "跳过", "不清楚", "none", "skip", "not sure"}
+    ]
+    for answer in answered[:3]:
+        lines.append(f"- {answer.answer.strip()}")
+
     if candidate.skills:
         lines.extend(["", "## 技能"])
         lines.append("- " + "、".join(candidate.skills[:20]))
@@ -83,25 +90,6 @@ def _fallback_write(
                 lines.append(f"- {project.description}")
             for ach in project.achievements[:4]:
                 lines.append(f"- {ach}")
-
-    answered = [
-        a for a in user_answers
-        if a.answer.strip() and a.answer.strip().lower() not in {"没有", "跳过", "不清楚", "none", "skip", "not sure"}
-    ]
-    if answered:
-        lines.extend(["", "## 补充信息"])
-        for answer in answered:
-            lines.append(f"- {answer.answer.strip()}")
-
-    if memory_text.strip():
-        lines.extend(["", "## 记忆库可用事实"])
-        for line in _short_lines(memory_text)[:5]:
-            lines.append(f"- {line}")
-
-    if github_context.strip():
-        lines.extend(["", "## GitHub 相关证据"])
-        for line in _short_lines(github_context)[:5]:
-            lines.append(f"- {line}")
 
     if candidate.education:
         lines.extend(["", "## 教育背景"])
