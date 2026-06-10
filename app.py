@@ -689,6 +689,7 @@ def render_analysis_section(modules) -> None:
 def render_questions(modules, gap, quality=None) -> None:
     st.subheader("补充真实信息")
     st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
+    quality = quality or (st.session_state.analysis_state or {}).get("resume_quality_report")
     resume_quality_questions = _resume_quality_questions(quality)
     if resume_quality_questions:
         st.markdown("**优先补全简历质量问题**")
