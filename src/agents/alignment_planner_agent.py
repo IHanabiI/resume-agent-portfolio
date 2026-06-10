@@ -71,9 +71,11 @@ def _fallback_plan(
     memory_text: str,
     github_context: str,
 ) -> ResumeAlignmentPlan:
+    star_evidence = []
     evidence = []
     if star:
-        evidence.extend(item.raw_text for item in star.items[:6] if item.raw_text.strip())
+        star_evidence.extend(item.raw_text for item in star.items[:6] if item.raw_text.strip())
+    evidence.extend(star_evidence)
     evidence.extend(gap.matched_strengths[:4])
     evidence.extend(
         answer.answer.strip()
@@ -95,7 +97,7 @@ def _fallback_plan(
             allowed_change="rewrite_existing",
             priority=4,
         )
-        for item in evidence[:5]
+        for item in star_evidence[:5]
     ]
 
     placeholders = []
