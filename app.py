@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.requirement_classifier import cluster_hard_requirements, filter_actionable_hard_requirements, soft_group_for_requirement
 from src.schemas import JobWorkspace, QuestionItem
@@ -24,6 +25,7 @@ st.set_page_config(page_title="简历定制 Agent", layout="wide")
 def load_app_modules():
     from src.config import OUTPUT_DIR, get_settings
     from src.exporter.docx_exporter import markdown_to_docx_bytes, markdown_to_template_docx_bytes, save_docx
+    from src.exporter.html_resume_exporter import build_editable_resume_html, extract_first_docx_image_data_uri
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
@@ -101,6 +103,8 @@ def load_app_modules():
         "get_settings": get_settings,
         "markdown_to_docx_bytes": markdown_to_docx_bytes,
         "markdown_to_template_docx_bytes": markdown_to_template_docx_bytes,
+        "build_editable_resume_html": build_editable_resume_html,
+        "extract_first_docx_image_data_uri": extract_first_docx_image_data_uri,
         "save_docx": save_docx,
         "build_full_markdown": build_full_markdown,
         "save_markdown": save_markdown,
@@ -968,6 +972,22 @@ def _get_resume_template_docx_bytes() -> bytes:
         return b""
 
 
+def _resume_export_title() -> str:
+    parts = [
+        st.session_state.get("job_company", "").strip(),
+        st.session_state.get("job_title", "").strip(),
+        "定制简历",
+    ]
+    return " - ".join(part for part in parts if part)
+
+
+def _html_resume_storage_key() -> str:
+    active = st.session_state.get("active_job_id", "") or "current"
+    workspace = st.session_state.get("workspace_id", "") or "local"
+    raw = f"{workspace}:{active}:{_resume_export_title()}"
+    return "resume-agent:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def _extract_placeholders(text: str) -> list[str]:
     matches = re.findall(r"\[(请填写|需用户确认)[:：]([^\]]+)\]", text or "")
     return [f"{kind}：{content.strip()}" for kind, content in matches if content.strip()]
@@ -1647,64 +1667,85 @@ def render_generation_section(modules) -> None:
     st.header("岗位交付材料")
     tabs = st.tabs(["定制简历", "开场白", "改动说明", "待确认", "核验信息"])
     with tabs[0]:
-        st.caption("这里可以在导出前微调简历正文。下载的 Markdown / DOCX 只包含下方简历内容，不包含开场白、改动说明或证据表。")
+        st.caption("主交付改为参考 job-hunt 的 HTML/PDF 简历视图：简历正文可编辑，开场白、改动说明和证据表只在 Agent 中展示，不写进简历文件。")
         st.session_state.editable_resume_markdown = st.text_area(
-            "可投递简历正文",
+            "可投递简历正文源 Markdown",
             value=st.session_state.editable_resume_markdown,
-            height=560,
+            height=360,
             key="editable_resume_textarea",
         )
-        with st.expander("预览可投递简历", expanded=True):
-            st.markdown(st.session_state.editable_resume_markdown or "暂无简历内容。")
 
-        template_upload = st.file_uploader(
-            "上传原始 DOCX 模板用于模板版导出",
+        photo_upload = st.file_uploader(
+            "上传原始 DOCX 用于读取简历头像",
             type=["docx"],
             key="resume_template_docx_uploader",
-            help="如果原始简历是 DOCX，系统会尽量保留照片、页眉页脚等模板外壳，并用统一简历样式重新排版正文。",
+            help="如果上传 DOCX，系统会尝试读取其中第一张图片作为简历照片。最终主交付是 HTML/PDF，不再承诺复刻任意 Word 模板。",
         )
-        if template_upload:
-            _store_resume_template_docx(template_upload.name, template_upload.getvalue())
+        if photo_upload:
+            _store_resume_template_docx(photo_upload.name, photo_upload.getvalue())
             _auto_save_workspace(modules, modules["get_settings"]())
-            st.success(f"已保存 DOCX 模板：{template_upload.name}")
+            st.success(f"已保存头像来源 DOCX：{photo_upload.name}")
 
         template_bytes = _get_resume_template_docx_bytes()
-        if template_bytes:
-            st.caption(f"模板版 DOCX 将基于 `{st.session_state.resume_template_docx_name}` 生成：保留照片/页眉页脚等模板外壳，正文使用统一简历排版，避免旧模板标题样式污染正文。")
-        else:
-            st.caption("普通 DOCX 是重新排版版本，不会保留原始照片或页眉页脚；如需保留，请上传原始 DOCX 模板。")
+        photo_data_uri = modules["extract_first_docx_image_data_uri"](template_bytes) if template_bytes else ""
+        storage_key = _html_resume_storage_key()
+        html_resume = modules["build_editable_resume_html"](
+            st.session_state.editable_resume_markdown or "",
+            title=_resume_export_title(),
+            photo_data_uri=photo_data_uri,
+            storage_key=storage_key,
+        )
 
-        col_md, col_docx, col_template_docx = st.columns(3)
-        with col_md:
+        st.markdown("**可编辑 A4 简历视图**")
+        st.caption("下方预览和下载的 HTML 都支持直接编辑；下载 HTML 后点击“打印 / 保存 PDF”，用浏览器保存为 PDF。若要写回 Agent 岗位库，请修改上方 Markdown 后点击“保存微调到当前岗位”。")
+        components.html(html_resume, height=760, scrolling=True)
+
+        primary_col1, primary_col2, primary_col3 = st.columns(3)
+        with primary_col1:
             st.download_button(
-                "下载可投递简历 Markdown",
+                "下载可编辑 HTML 简历",
+                data=html_resume.encode("utf-8"),
+                file_name="tailored_resume.html",
+                mime="text/html",
+            )
+        with primary_col2:
+            st.download_button(
+                "下载源 Markdown",
                 data=(st.session_state.editable_resume_markdown or "").encode("utf-8"),
                 file_name="tailored_resume.md",
                 mime="text/markdown",
             )
-        with col_docx:
-            st.download_button(
-                "下载普通 DOCX",
-                data=modules["markdown_to_docx_bytes"](st.session_state.editable_resume_markdown or ""),
-                file_name="tailored_resume.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
-        with col_template_docx:
-            if template_bytes:
+        with primary_col3:
+            if st.button("保存微调到当前岗位", key="save_edited_resume"):
+                _save_edited_resume_package(modules, tailored, fact_check)
+                st.success("已保存微调后的简历正文。")
+
+        with st.expander("辅助格式：DOCX", expanded=False):
+            st.caption("DOCX 是辅助编辑格式。任意 Word 模板无法稳定保真；正式投递建议优先使用上方 HTML 打印得到的 PDF。")
+            docx_col1, docx_col2 = st.columns(2)
+            with docx_col1:
                 st.download_button(
-                    "下载模板版 DOCX",
-                    data=modules["markdown_to_template_docx_bytes"](
-                        st.session_state.editable_resume_markdown or "",
-                        template_bytes,
-                    ),
-                    file_name="tailored_resume_template.docx",
+                    "下载普通 DOCX",
+                    data=modules["markdown_to_docx_bytes"](st.session_state.editable_resume_markdown or ""),
+                    file_name="tailored_resume.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
-            else:
-                st.button("下载模板版 DOCX", disabled=True, help="请先上传原始 DOCX 模板。")
-        if st.button("保存微调到当前岗位", key="save_edited_resume"):
-            _save_edited_resume_package(modules, tailored, fact_check)
-            st.success("已保存微调后的简历正文。")
+            with docx_col2:
+                st.download_button(
+                    "下载照片版 DOCX",
+                    data=(
+                        modules["markdown_to_template_docx_bytes"](
+                            st.session_state.editable_resume_markdown or "",
+                            template_bytes,
+                        )
+                        if template_bytes
+                        else b""
+                    ),
+                    file_name="tailored_resume_photo.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    disabled=not bool(template_bytes),
+                    help="仅尝试保留 DOCX 中的图片/页眉页脚外壳，不保证复刻原 Word 模板。",
+                )
     with tabs[1]:
         st.markdown(tailored.opener_markdown or "暂无开场白。")
         st.download_button(
