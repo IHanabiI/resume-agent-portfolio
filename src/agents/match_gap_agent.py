@@ -13,7 +13,16 @@ from src.requirement_classifier import (
     soft_group_for_requirement,
     split_hard_and_soft_requirements,
 )
-from src.schemas import CandidateProfile, GapAnalysis, JobAnalysis, QuestionItem, SoftEvidenceGap, UserAnswer
+from src.schemas import (
+    CandidateProfile,
+    GapAnalysis,
+    JobAnalysis,
+    QuestionItem,
+    ResumeQualityReport,
+    ResumeStarProfile,
+    SoftEvidenceGap,
+    UserAnswer,
+)
 
 
 def analyze_match_and_gap(
@@ -23,10 +32,12 @@ def analyze_match_and_gap(
     memory_text: str = "",
     github_context: str = "",
     user_answers: list[UserAnswer] | None = None,
+    resume_quality: ResumeQualityReport | None = None,
+    star_profile: ResumeStarProfile | None = None,
     llm: LLMClient | None = None,
 ) -> GapAnalysis:
     llm = llm or LLMClient()
-    context = _build_context(resume_text, memory_text, github_context, user_answers or [])
+    context = _build_context(resume_text, memory_text, github_context, user_answers or [], resume_quality, star_profile)
     if llm.settings.fast_analysis_mode:
         return _prune_answered_gap(_fallback_gap(candidate, job, context), user_answers or [])
     prompt = load_prompt("match_gap_prompt.md")
@@ -46,8 +57,20 @@ def _build_context(
     memory_text: str,
     github_context: str,
     user_answers: list[UserAnswer],
+    resume_quality: ResumeQualityReport | None = None,
+    star_profile: ResumeStarProfile | None = None,
 ) -> str:
-    sections = [f"## 原始简历\n{resume_text}"]
+    sections = []
+    if star_profile and star_profile.items:
+        star_lines = "\n".join(f"- {item.raw_text}" for item in star_profile.items if item.raw_text.strip())
+        if star_lines.strip():
+            sections.append(f"## 有效 STAR 证据\n{star_lines}")
+    elif not resume_quality or resume_quality.evaluated_items > 0:
+        sections.append(f"## 原始简历\n{resume_text}")
+    elif resume_quality.empty_shell_items:
+        sections.append(
+            f"## 空壳经历提示\n原简历存在 {len(resume_quality.empty_shell_items)} 条只有标题、时间或组织信息的经历，不能作为能力证明。"
+        )
     if memory_text.strip():
         sections.append(f"## 个人记忆库\n{memory_text}")
     if github_context.strip():
