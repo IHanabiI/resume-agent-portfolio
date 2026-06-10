@@ -48,7 +48,17 @@ def write_resume(
         TailoredResumeResult,
     )
     if not result:
-        return _fallback_write(candidate, job, gap, user_answers, memory_text, github_context, alignment_plan)
+        return _fallback_write(
+            candidate,
+            job,
+            gap,
+            user_answers,
+            memory_text,
+            github_context,
+            resume_text,
+            ordered_resume_draft,
+            alignment_plan,
+        )
     return _complete_result(result, candidate, job, gap, github_context, alignment_plan)
 
 
@@ -138,8 +148,31 @@ def _fallback_write(
     user_answers: list[UserAnswer],
     memory_text: str,
     github_context: str,
+    resume_text: str = "",
+    ordered_resume_draft: str = "",
     alignment_plan: ResumeAlignmentPlan | None = None,
 ) -> TailoredResumeResult:
+    base_resume = (ordered_resume_draft or resume_text or "").strip()
+    if base_resume:
+        return TailoredResumeResult(
+            resume_markdown=base_resume,
+            opener_markdown=_build_opener(candidate, job, gap, github_context),
+            changelog_markdown=_build_changelog(
+                job,
+                gap,
+                [k for k in job.keywords if k][:12],
+                gap.missing_information[:8],
+                alignment_plan,
+            ),
+            optimization_notes=[
+                "LLM 未返回可用结果时，已保留原简历结构或程序预排草稿，避免生成新的模板化简历。",
+                "未在 fallback 中新增无来源经历、技能或量化结果。",
+            ],
+            integrated_keywords=[k for k in job.keywords if k][:12],
+            still_missing_info=gap.missing_information[:8],
+            evidence_map=_evidence_from_existing_resume(base_resume, user_answers, memory_text, github_context),
+        )
+
     lines = [
         f"# {candidate.name or '候选人'}",
         "",
@@ -250,6 +283,52 @@ def _fallback_write(
         still_missing_info=gap.missing_information[:8],
         evidence_map=evidence,
     )
+
+
+def _evidence_from_existing_resume(
+    resume_markdown: str,
+    user_answers: list[UserAnswer],
+    memory_text: str,
+    github_context: str,
+) -> list[EvidenceItem]:
+    evidence = [
+        EvidenceItem(
+            resume_claim=line.lstrip("-# ").strip(),
+            source_type="original_resume",
+            source_text=line.lstrip("-# ").strip(),
+            status="verified",
+        )
+        for line in _short_lines(resume_markdown)[:40]
+    ]
+    for answer in user_answers:
+        if answer.answer.strip() and answer.answer.strip().lower() not in {"没有", "跳过", "不清楚", "none", "skip", "not sure"}:
+            evidence.append(
+                EvidenceItem(
+                    resume_claim=answer.answer.strip(),
+                    source_type="user_answer",
+                    source_text=answer.answer.strip(),
+                    status="verified",
+                )
+            )
+    if memory_text.strip():
+        evidence.append(
+            EvidenceItem(
+                resume_claim="参考个人记忆库中的可用事实。",
+                source_type="user_memory",
+                source_text=memory_text[:500],
+                status="verified",
+            )
+        )
+    if github_context.strip():
+        evidence.append(
+            EvidenceItem(
+                resume_claim="参考 GitHub 公开仓库证据。",
+                source_type="github",
+                source_text=github_context[:500],
+                status="verified",
+            )
+        )
+    return evidence[:80]
 
 
 def _build_opener(
