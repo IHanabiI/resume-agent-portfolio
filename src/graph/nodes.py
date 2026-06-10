@@ -6,6 +6,7 @@ from src.agents.jd_analyzer_agent import analyze_jd
 from src.agents.job_fit_agent import assess_job_fit
 from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
+from src.agents.resume_changelog_agent import build_diff_changelog
 from src.agents.resume_output_guard_agent import guard_final_resume
 from src.agents.resume_parser_agent import parse_resume
 from src.agents.resume_plan_applier_agent import build_ordered_resume_draft
@@ -123,19 +124,25 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
 
 def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
     llm = get_llm_client()
+    tailored = state["tailored_resume"]
     checked = fact_check_resume(
-        state["tailored_resume"],
+        tailored,
         state["resume_text"],
         state.get("user_answers", []),
         state.get("memory_text", ""),
         state.get("github_context", ""),
         llm,
     )
-    final_resume = checked.final_resume_markdown or state["tailored_resume"].resume_markdown
+    final_resume = checked.final_resume_markdown or tailored.resume_markdown
     guarded_resume, guard_warnings = guard_final_resume(
         final_resume,
         state.get("resume_structure"),
     )
     checked.final_resume_markdown = guarded_resume
     checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *guard_warnings]))[:30]
-    return {"fact_check": checked}
+    tailored.changelog_markdown = build_diff_changelog(
+        state["resume_text"],
+        guarded_resume,
+        guard_warnings,
+    )
+    return {"fact_check": checked, "tailored_resume": tailored}
