@@ -18,11 +18,286 @@ def build_editable_resume_html(
     photo_data_uri: str = "",
     storage_key: str = "resume-agent-editable-resume",
 ) -> str:
-    return build_job_delivery_html(
-        resume_markdown=resume_markdown,
-        title=title,
-        photo_data_uri=photo_data_uri,
-        storage_key=storage_key,
+    resume_html = _markdown_to_html(resume_markdown)
+    safe_title = html.escape(title or "定制简历")
+    safe_storage_key = json.dumps(storage_key or "resume-agent-editable-resume", ensure_ascii=False)
+    filename_json = json.dumps(_pdf_filename("", title or "定制简历"), ensure_ascii=False)
+    photo_html = (
+        f'<img class="resume-photo" src="{html.escape(photo_data_uri, quote=True)}" alt="简历照片">'
+        if photo_data_uri
+        else ""
+    )
+    template = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__TITLE__</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    :root {
+      --ink: #111827;
+      --muted: #64748b;
+      --line: #dbe3ef;
+      --accent: #205781;
+      --accent-strong: #174264;
+      --paper: #ffffff;
+      --bg: #eef3f8;
+      --warn: #b45309;
+      --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "Source Han Sans CN", "Noto Sans CJK SC", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+    button {
+      height: 34px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #111827;
+      padding: 0 12px;
+      border-radius: 6px;
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover { background: #f8fafc; border-color: #94a3b8; }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 700;
+    }
+    button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      background: rgba(255, 255, 255, .96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    .title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.25;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .save-status {
+      min-width: 92px;
+      color: #047857;
+      font-size: 12px;
+      text-align: right;
+    }
+    .save-status.editing { color: var(--muted); }
+    .shell {
+      width: min(980px, calc(100vw - 28px));
+      margin: 18px auto 42px;
+      overflow-x: auto;
+      padding-bottom: 24px;
+    }
+    .page {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      padding: 16mm 17mm 15mm;
+      background: var(--paper);
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .16);
+    }
+    .resume-photo {
+      position: absolute;
+      top: 16mm;
+      right: 17mm;
+      width: 25mm;
+      height: 33mm;
+      object-fit: cover;
+      border: 1px solid #dbe3ef;
+      background: #fff;
+    }
+    #resume {
+      min-height: 262mm;
+      outline: none;
+      padding-right: __PHOTO_PAD__;
+    }
+    #resume:focus { outline: 2px solid #93c5fd; outline-offset: 6px; }
+    #resume h1 {
+      margin: 0 0 5px;
+      font-size: 21px;
+      line-height: 1.15;
+      color: #111827;
+      letter-spacing: 0;
+    }
+    #resume h2 {
+      margin: 12px 0 6px;
+      padding-bottom: 3px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14.5px;
+      line-height: 1.25;
+      color: var(--accent);
+      letter-spacing: 0;
+    }
+    #resume h3 {
+      margin: 8px 0 4px;
+      font-size: 13px;
+      line-height: 1.28;
+      color: #111827;
+      letter-spacing: 0;
+    }
+    #resume p { margin: 3px 0; }
+    #resume ul, #resume ol {
+      margin: 4px 0 7px 18px;
+      padding: 0;
+    }
+    #resume li {
+      margin: 2px 0;
+      padding-left: 2px;
+    }
+    #resume strong { font-weight: 700; }
+    #resume a { color: #0f4c81; text-decoration: none; }
+    .ph-fill, .ph-confirm {
+      display: inline;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+    .ph-fill {
+      background: #fee2e2;
+      color: var(--danger);
+      border: 1px dashed #dc2626;
+    }
+    .ph-confirm {
+      background: #fef3c7;
+      color: var(--warn);
+      border: 1px dashed #d97706;
+    }
+    @page {
+      size: A4;
+      margin: 0;
+    }
+    @media (max-width: 760px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .actions { justify-content: flex-start; width: 100%; }
+      .save-status { text-align: left; }
+      .shell { width: calc(100vw - 18px); margin-top: 12px; }
+      .page { margin-left: 0; margin-right: 0; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar { display: none !important; }
+      .shell { width: auto; margin: 0; padding: 0; overflow: visible; }
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0;
+        padding: 16mm 17mm 15mm;
+        box-shadow: none;
+      }
+      #resume { padding-right: __PHOTO_PAD__; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="title">__TITLE__</h1>
+    <div class="actions">
+      <span class="save-status" id="save-status">已自动保存</span>
+      <button id="restore-btn" type="button">还原初始版本</button>
+      <button class="primary" id="pdf-btn" type="button">导出 PDF</button>
+    </div>
+  </header>
+  <main class="shell">
+    <article class="page" id="resume-paper">
+      __PHOTO_HTML__
+      <section id="resume" contenteditable="true">__RESUME_HTML__</section>
+    </article>
+  </main>
+  <script>
+    const storageKey = __STORAGE_KEY__;
+    const pdfFilename = __FILENAME_JSON__;
+    const resumeEl = document.getElementById("resume");
+    const resumePaper = document.getElementById("resume-paper");
+    const statusEl = document.getElementById("save-status");
+    const initialHtml = resumeEl.innerHTML;
+    const saved = localStorage.getItem(storageKey);
+    if (saved !== null) {
+      resumeEl.innerHTML = saved;
+    }
+
+    function setStatus(text, editing) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("editing", Boolean(editing));
+    }
+
+    let timer = null;
+    resumeEl.addEventListener("paste", event => {
+      event.preventDefault();
+      const text = (event.clipboardData || window.clipboardData).getData("text/plain");
+      document.execCommand("insertText", false, text);
+    });
+    resumeEl.addEventListener("input", () => {
+      setStatus("编辑中...", true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        localStorage.setItem(storageKey, resumeEl.innerHTML);
+        setStatus("已自动保存", false);
+      }, 450);
+    });
+
+    document.getElementById("restore-btn").addEventListener("click", () => {
+      localStorage.removeItem(storageKey);
+      resumeEl.innerHTML = initialHtml;
+      setStatus("已还原", false);
+    });
+
+    document.getElementById("pdf-btn").addEventListener("click", () => {
+      const cloned = resumePaper.cloneNode(true);
+      cloned.style.boxShadow = "none";
+      cloned.style.margin = "0";
+      cloned.querySelector("#resume")?.removeAttribute("contenteditable");
+
+      if (window.html2pdf) {
+        html2pdf().set({
+          margin: 0,
+          filename: pdfFilename,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#fff" },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"] }
+        }).from(cloned).save();
+      } else {
+        window.print();
+      }
+    });
+  </script>
+</body>
+</html>"""
+
+    return (
+        template.replace("__TITLE__", safe_title)
+        .replace("__PHOTO_HTML__", photo_html)
+        .replace("__PHOTO_PAD__", "33mm" if photo_data_uri else "0")
+        .replace("__RESUME_HTML__", resume_html)
+        .replace("__STORAGE_KEY__", safe_storage_key)
+        .replace("__FILENAME_JSON__", filename_json)
     )
 
 

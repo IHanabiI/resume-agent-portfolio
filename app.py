@@ -1696,7 +1696,13 @@ def render_generation_section(modules) -> None:
         photo_data_uri = modules["extract_first_docx_image_data_uri"](template_bytes) if template_bytes else ""
         storage_key = _html_resume_storage_key(st.session_state.editable_resume_markdown or "")
         active_job = _find_job(st.session_state.job_workspace, st.session_state.active_job_id)
-        html_resume = modules["build_job_delivery_html"](
+        final_resume_html = modules["build_editable_resume_html"](
+            st.session_state.editable_resume_markdown or "",
+            title=_resume_export_title(),
+            photo_data_uri=photo_data_uri,
+            storage_key=storage_key,
+        )
+        delivery_html = modules["build_job_delivery_html"](
             resume_markdown=st.session_state.editable_resume_markdown or "",
             opener_markdown=getattr(tailored, "opener_markdown", ""),
             changelog_markdown=getattr(tailored, "changelog_markdown", ""),
@@ -1706,19 +1712,19 @@ def render_generation_section(modules) -> None:
             match_score=getattr(active_job, "match_score", 0) if active_job else 0,
             source_url=getattr(active_job, "source_url", "") if active_job else "",
             photo_data_uri=photo_data_uri,
-            storage_key=storage_key,
+            storage_key=f"{storage_key}:delivery",
         )
 
-        st.markdown("**可编辑岗位交付 HTML**")
-        st.caption("下方预览和下载的 HTML 内含定制简历、开场白、改动说明三个标签；简历标签可直接编辑并自动保存，导出 PDF 只导出简历正文。若要写回 Agent 岗位库，请修改上方 Markdown 后点击“保存微调到当前岗位”。")
-        components.html(html_resume, height=820, scrolling=True)
+        st.markdown("**最终可投递简历**")
+        st.caption("下方预览和下载的 HTML 只包含简历正文，可直接编辑并导出 PDF；改动说明、开场白和核验信息仅在 Agent 页面展示，不写进最终简历。若要写回 Agent 岗位库，请修改上方 Markdown 后点击“保存微调到当前岗位”。")
+        components.html(final_resume_html, height=820, scrolling=True)
 
         primary_col1, primary_col2, primary_col3 = st.columns(3)
         with primary_col1:
             st.download_button(
-                "下载可编辑交付 HTML",
-                data=html_resume.encode("utf-8"),
-                file_name="tailored_delivery.html",
+                "下载最终简历 HTML",
+                data=final_resume_html.encode("utf-8"),
+                file_name="final_resume.html",
                 mime="text/html",
             )
         with primary_col2:
@@ -1732,6 +1738,15 @@ def render_generation_section(modules) -> None:
             if st.button("保存微调到当前岗位", key="save_edited_resume"):
                 _save_edited_resume_package(modules, tailored, fact_check)
                 st.success("已保存微调后的简历正文。")
+
+        with st.expander("辅助审查材料：完整交付 HTML", expanded=False):
+            st.caption("这个文件包含简历、开场白和改动说明三个标签，适合自己复盘，不建议直接作为投递简历发送。")
+            st.download_button(
+                "下载完整交付 HTML",
+                data=delivery_html.encode("utf-8"),
+                file_name="tailored_delivery_review.html",
+                mime="text/html",
+            )
 
         with st.expander("辅助格式：DOCX", expanded=False):
             st.caption("DOCX 是辅助编辑格式。任意 Word 模板无法稳定保真；正式投递建议优先使用上方 HTML 打印得到的 PDF。")
