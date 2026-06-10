@@ -4,6 +4,7 @@ from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
 from src.requirement_classifier import (
     active_soft_groups,
+    cluster_hard_requirements,
     filter_actionable_hard_requirements,
     has_soft_evidence,
     is_soft_requirement,
@@ -100,17 +101,17 @@ def _fallback_gap(candidate: CandidateProfile, job: JobAnalysis, context: str) -
         else:
             hard_gaps.append(skill)
             missing.append(f"硬技能缺口：未找到「{skill}」的明确经历或证据。")
-            if len(questions) < 5:
-                questions.append(
-                    QuestionItem(
-                        question=(
-                            f"JD 提到「{skill}」。你是否有真实使用或相关项目经历？"
-                            "请说明具体场景、你的职责、使用工具和可确认成果；如果没有，请回答“没有”或“跳过”。"
-                        ),
-                        why_needed="用于判断是否可以把该能力写入定制简历，避免无来源补写。",
-                        related_jd_requirement=skill,
-                    )
-                )
+    for group in cluster_hard_requirements(hard_gaps):
+        if len(questions) >= 5:
+            break
+        related = "、".join(str(item) for item in group.get("requirements", []) if str(item).strip())
+        questions.append(
+            QuestionItem(
+                question=str(group["question"]),
+                why_needed=f"用于判断是否可以把「{group['name']}」写入定制简历，避免逐个关键词机械追问或无来源补写。",
+                related_jd_requirement=related or str(group["name"]),
+            )
+        )
 
     if len(questions) < 5 and not _has_project_context(context):
         questions.append(
@@ -236,7 +237,7 @@ def _filter_legacy_soft_questions(questions: list[QuestionItem]) -> list[Questio
                 )
             )
             continue
-        if is_soft_requirement(requirement) or _looks_like_legacy_generic_soft_question(text):
+        if is_soft_requirement(requirement) or _looks_like_legacy_generic_soft_question(text) or _looks_like_legacy_keyword_question(text):
             continue
         result.append(question)
     return result
@@ -258,3 +259,7 @@ def _looks_like_soft_keyword_missing(text: str) -> bool:
 
 def _looks_like_legacy_generic_soft_question(text: str) -> bool:
     return text.startswith("JD 提到") and any(term in text for term in ["沟通", "协作", "团队", "逻辑", "表达", "用户体验", "反馈", "细节"])
+
+
+def _looks_like_legacy_keyword_question(text: str) -> bool:
+    return text.startswith("JD 提到") and "你是否有真实使用或相关项目经历" in text

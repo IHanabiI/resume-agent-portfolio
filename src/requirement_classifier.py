@@ -54,6 +54,39 @@ GENERIC_DOMAIN_TERMS = {
     "反馈",
 }
 
+HARD_REQUIREMENT_GROUPS: list[dict[str, object]] = [
+    {
+        "name": "表格配置与数值整理",
+        "triggers": ["Excel", "配置表", "表格", "数值", "公式", "数据整理"],
+        "evidence_needed": "用 Excel、飞书表格或配置表整理玩法规则、关卡参数、数值、反馈或版本内容的经历。",
+        "question": "JD 提到 Excel / 配置表 / 数值整理。你是否用表格整理过玩法规则、关卡参数、数值、反馈或版本内容？请说明表格用途、字段或规则、你负责的部分，以及它是否被用于 Demo、文档、配置或迭代；如果没有，请回答“没有”。",
+    },
+    {
+        "name": "玩法与系统设计",
+        "triggers": ["玩法设计", "系统设计", "玩法", "系统", "机制", "规则", "活动玩法"],
+        "evidence_needed": "从目标、规则、流程、状态、反馈、奖励或限制条件出发，设计一个玩法/系统/活动机制的案例。",
+        "question": "JD 提到玩法设计或系统设计。你是否有一个完整的玩法、系统、活动或机制设计案例？请按“目标玩家/设计目标 - 核心规则 - 玩家操作流程 - 反馈/奖励 - 你产出的文档或原型 - 最终结果”说明；如果没有，请回答“没有”。",
+    },
+    {
+        "name": "关卡 / 战斗 / 怪物设计",
+        "triggers": ["关卡设计", "关卡", "战斗设计", "战斗", "怪物", "Boss", "敌人", "难度曲线"],
+        "evidence_needed": "关卡、战斗、怪物、Boss、难度曲线或玩家挑战节奏相关的设计案例。",
+        "question": "JD 提到关卡、战斗或怪物相关设计。你是否做过关卡流程、敌人/怪物机制、Boss 技能、战斗节奏或难度曲线设计？请说明设计目标、核心机制、玩家体验路径、你如何验证或调整；如果没有，请回答“没有”。",
+    },
+    {
+        "name": "引擎 / 编辑器 / 原型实现",
+        "triggers": ["Unity", "Unreal", "UE", "Godot", "编辑器", "蓝图", "Demo", "原型"],
+        "evidence_needed": "使用 Unity、Unreal、Godot、编辑器、蓝图或其他工具制作 Demo、原型、关卡或可交互验证内容的经历。",
+        "question": "JD 提到引擎、编辑器、Demo 或原型能力。你是否用 Unity / Unreal / Godot / 编辑器 / 蓝图做过可运行 Demo、关卡白盒、玩法原型或交互验证？请说明工具、你实现了什么、验证了什么设计问题；如果没有，请回答“没有”。",
+    },
+    {
+        "name": "竞品拆解与体验分析",
+        "triggers": ["竞品分析", "竞品", "体验分析", "用户体验", "玩家反馈", "反馈"],
+        "evidence_needed": "拆解竞品玩法、整理玩家反馈、试玩记录、体验问题分析并提出优化方案的经历。",
+        "question": "JD 提到竞品、用户体验或玩家反馈。你是否做过竞品玩法拆解、试玩记录、玩家反馈整理或体验问题分析？请说明你分析的对象、发现的问题、提出的优化建议和依据；如果没有，请回答“没有”。",
+    },
+]
+
 
 def is_soft_requirement(text: str) -> bool:
     value = text.strip()
@@ -106,6 +139,37 @@ def filter_actionable_hard_requirements(items: list[str]) -> list[str]:
         seen.add(key)
         result.append(value)
     return result
+
+
+def cluster_hard_requirements(items: list[str]) -> list[dict[str, object]]:
+    active: list[dict[str, object]] = []
+    joined = "\n".join(items)
+    covered: set[str] = set()
+    for group in HARD_REQUIREMENT_GROUPS:
+        triggers = [str(term) for term in group["triggers"]]
+        matched = [item for item in items if any(term.lower() in item.lower() or item.lower() in term.lower() for term in triggers)]
+        if matched or any(term.lower() in joined.lower() for term in triggers):
+            copy = dict(group)
+            copy["requirements"] = matched or triggers[:2]
+            active.append(copy)
+            covered.update(item.lower() for item in matched)
+
+    for item in items:
+        if item.lower() in covered:
+            continue
+        active.append(
+            {
+                "name": item,
+                "triggers": [item],
+                "requirements": [item],
+                "evidence_needed": f"能证明「{item}」的真实项目、课程、实习、作品或工具使用经历。",
+                "question": (
+                    f"JD 提到「{item}」。你是否有能证明这项要求的真实经历？"
+                    "请说明具体场景、你的职责、产出物和可确认结果；如果没有，请回答“没有”。"
+                ),
+            }
+        )
+    return active
 
 
 def active_soft_groups(job_text: str) -> list[dict[str, object]]:

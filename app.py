@@ -8,7 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.requirement_classifier import soft_group_for_requirement
+from src.requirement_classifier import cluster_hard_requirements, filter_actionable_hard_requirements, soft_group_for_requirement
 from src.schemas import JobWorkspace, QuestionItem
 
 ROOT = Path(__file__).resolve().parent
@@ -1195,6 +1195,8 @@ def _questions_for_display(gap):
     questions = []
     seen_soft_groups = set()
     seen_questions = set()
+    hard_requirements = filter_actionable_hard_requirements(list(getattr(gap, "hard_skill_gaps", []) or []))
+    deferred_questions = []
 
     for item in getattr(gap, "soft_evidence_gaps", []) or []:
         group_name = item.requirement.strip()
@@ -1229,11 +1231,36 @@ def _questions_for_display(gap):
                 )
             )
             continue
+        if _is_legacy_keyword_question(question.question):
+            if question.related_jd_requirement.strip():
+                hard_requirements.append(question.related_jd_requirement.strip())
+            continue
+        deferred_questions.append(question)
+
+    for group in cluster_hard_requirements(filter_actionable_hard_requirements(hard_requirements)):
+        key = str(group["name"]).strip().lower()
+        if key in seen_questions:
+            continue
+        seen_questions.add(key)
+        related = "、".join(str(item) for item in group.get("requirements", []) if str(item).strip())
+        questions.append(
+            QuestionItem(
+                question=str(group["question"]),
+                why_needed=f"用于判断是否可以把「{group['name']}」写入定制简历，避免逐个关键词机械追问或无来源补写。",
+                related_jd_requirement=related or str(group["name"]),
+            )
+        )
+
+    for question in deferred_questions:
         key = f"{question.related_jd_requirement.strip().lower()}::{question.question.strip().lower()}"
         if question.question.strip() and key not in seen_questions:
             seen_questions.add(key)
             questions.append(question)
     return questions
+
+
+def _is_legacy_keyword_question(text: str) -> bool:
+    return text.strip().startswith("JD 提到") and "你是否有真实使用或相关项目经历" in text
 
 
 def _question_key(text: str) -> str:
