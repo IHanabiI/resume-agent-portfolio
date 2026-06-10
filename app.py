@@ -37,8 +37,11 @@ def load_app_modules():
     from src.job_store import (
         get_active_job,
         infer_job_title_from_jd,
+        job_import_supported_fields,
         job_workspace_to_json_text,
+        job_workspace_template_json,
         parse_job_workspace_upload,
+        parse_job_workspace_upload_with_report,
         ranked_jobs,
         shortlist_to_json_text,
         update_job_package,
@@ -118,8 +121,11 @@ def load_app_modules():
         "github_context_to_text": github_context_to_text,
         "get_active_job": get_active_job,
         "infer_job_title_from_jd": infer_job_title_from_jd,
+        "job_import_supported_fields": job_import_supported_fields,
         "job_workspace_to_json_text": job_workspace_to_json_text,
+        "job_workspace_template_json": job_workspace_template_json,
         "parse_job_workspace_upload": parse_job_workspace_upload,
+        "parse_job_workspace_upload_with_report": parse_job_workspace_upload_with_report,
         "ranked_jobs": ranked_jobs,
         "shortlist_to_json_text": shortlist_to_json_text,
         "update_job_package": update_job_package,
@@ -165,6 +171,7 @@ def init_state() -> None:
         "memory_candidates": [],
         "session_context_text": "",
         "job_workspace": None,
+        "job_import_report": None,
         "active_job_id": "",
         "job_company": "",
         "job_title": "",
@@ -415,17 +422,41 @@ def render_job_workspace_section(modules) -> None:
     st.caption("这里保存目标岗位、JD、投递状态和备注。岗位库会导出为 job_workspace.json，不依赖数据库。")
 
     workspace = st.session_state.job_workspace
-    upload = st.file_uploader("导入岗位库 JSON 或 JD 文本", type=["json", "txt"], key="job_workspace_upload")
+    import_col, template_col = st.columns([2, 1])
+    with import_col:
+        upload = st.file_uploader("导入岗位库 JSON / .jobs.json / JD 文本", type=["json", "txt"], key="job_workspace_upload")
+    with template_col:
+        st.download_button(
+            "下载岗位库模板",
+            data=modules["job_workspace_template_json"]().encode("utf-8"),
+            file_name="job_workspace_template.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+        with st.expander("支持字段", expanded=False):
+            for label, fields in modules["job_import_supported_fields"]().items():
+                st.write(f"**{label}**：`{', '.join(fields)}`")
+
     if upload:
         text = upload.getvalue().decode("utf-8", errors="ignore")
-        workspace = modules["parse_job_workspace_upload"](text)
-        st.session_state.job_workspace = workspace
-        active_job = modules["get_active_job"](workspace)
-        if active_job:
-            _load_job_into_session(active_job, modules)
-        _auto_save_workspace(modules, modules["get_settings"]())
-        st.success("已导入岗位库。")
+        workspace, report = modules["parse_job_workspace_upload_with_report"](text)
+        st.session_state.job_import_report = report
+        if report.get("errors"):
+            st.error("岗位库导入失败。")
+        elif workspace.jobs:
+            st.session_state.job_workspace = workspace
+            active_job = modules["get_active_job"](workspace)
+            if active_job:
+                _load_job_into_session(active_job, modules)
+            _auto_save_workspace(modules, modules["get_settings"]())
+            st.success(f"已导入 {len(workspace.jobs)} 个岗位。")
+        else:
+            st.warning("没有导入任何岗位，请检查 JSON 结构或直接粘贴单条 JD 文本。")
 
+    if st.session_state.get("job_import_report"):
+        _render_job_import_report(st.session_state.job_import_report)
+
+    workspace = st.session_state.job_workspace
     if workspace.jobs:
         options = [job.job_id for job in workspace.jobs]
         labels = {
@@ -512,6 +543,33 @@ def render_job_workspace_section(modules) -> None:
             for job in st.session_state.job_workspace.jobs
         ]
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+def _render_job_import_report(report: dict) -> None:
+    source_labels = {
+        "empty": "空文件",
+        "job_workspace": "原生岗位库 JSON",
+        "flexible_jobs_json": "通用岗位 JSON",
+        "plain_text": "单条 JD 文本",
+        "invalid_json": "无效 JSON",
+    }
+    with st.expander("最近一次岗位导入报告", expanded=bool(report.get("errors") or report.get("warnings"))):
+        cols = st.columns(3)
+        cols[0].metric("导入岗位", int(report.get("imported_count") or 0))
+        cols[1].metric("跳过项目", int(report.get("skipped_count") or 0))
+        cols[2].metric("识别类型", source_labels.get(report.get("source_type"), report.get("source_type", "未知")))
+
+        for error in report.get("errors", []):
+            st.error(error)
+        for warning in report.get("warnings", []):
+            st.warning(warning)
+
+        recognized_fields = report.get("recognized_fields") or []
+        if recognized_fields:
+            st.write("已识别字段：")
+            st.code(", ".join(recognized_fields), language="text")
+        if not report.get("errors") and not recognized_fields and report.get("source_type") != "plain_text":
+            st.caption("没有识别到标准字段。建议下载模板，对照字段名整理后重新导入。")
 
 
 def render_input_section(modules) -> None:

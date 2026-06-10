@@ -10,30 +10,212 @@ from src.schemas import JobPosting, JobWorkspace
 
 
 def parse_job_workspace_upload(text: str) -> JobWorkspace:
+    workspace, _report = parse_job_workspace_upload_with_report(text)
+    return workspace
+
+
+def parse_job_workspace_upload_with_report(text: str) -> tuple[JobWorkspace, dict[str, Any]]:
     text = text.strip()
     if not text:
-        return JobWorkspace()
+        return JobWorkspace(), _new_import_report(
+            source_type="empty",
+            errors=["文件内容为空，没有导入岗位。"],
+        )
     try:
         data = json.loads(text)
         if _looks_like_native_workspace(data):
-            return JobWorkspace.model_validate(data)
-        workspace = _parse_flexible_jobs_payload(data)
+            workspace = JobWorkspace.model_validate(data)
+            return workspace, _new_import_report(
+                source_type="job_workspace",
+                imported_count=len(workspace.jobs),
+                recognized_fields=_recognized_workspace_fields(data),
+                warnings=_workspace_warnings(workspace),
+            )
+        workspace, report = _parse_flexible_jobs_payload_with_report(data)
         if workspace.jobs:
-            return workspace
-        return JobWorkspace.model_validate(data)
-    except Exception:
-        return JobWorkspace(
-            jobs=[
-                JobPosting(
-                    job_id=_new_id(),
-                    title="导入的岗位",
-                    jd_text=text,
-                    status="待分析",
-                    created_at=_now(),
-                    updated_at=_now(),
-                )
+            return workspace, report
+        workspace = JobWorkspace.model_validate(data)
+        return workspace, _new_import_report(
+            source_type="job_workspace",
+            imported_count=len(workspace.jobs),
+            recognized_fields=_recognized_workspace_fields(data),
+            warnings=_workspace_warnings(workspace),
+        )
+    except json.JSONDecodeError as exc:
+        if text.startswith("{") or text.startswith("["):
+            return JobWorkspace(), _new_import_report(
+                source_type="invalid_json",
+                errors=[f"JSON 解析失败：第 {exc.lineno} 行第 {exc.colno} 列，{exc.msg}。"],
+            )
+        workspace = _plain_text_workspace(text)
+        return workspace, _new_import_report(
+            source_type="plain_text",
+            imported_count=len(workspace.jobs),
+            warnings=["未识别为 JSON，已按单条 JD 文本导入。"],
+        )
+    except Exception as exc:
+        if text.startswith("{") or text.startswith("["):
+            return JobWorkspace(), _new_import_report(
+                source_type="invalid_json",
+                errors=[f"JSON 结构不符合岗位库格式：{exc}"],
+            )
+        workspace = _plain_text_workspace(text)
+        return workspace, _new_import_report(
+            source_type="plain_text",
+            imported_count=len(workspace.jobs),
+            warnings=["未识别为岗位库 JSON，已按单条 JD 文本导入。"],
+        )
+
+
+def job_workspace_template_json() -> str:
+    now = _now()
+    sample = {
+        "version": "1.0",
+        "jobs": [
+            {
+                "company": "示例游戏公司",
+                "title": "玩法策划",
+                "source_url": "https://example.com/jobs/game-designer",
+                "platform": "Boss直聘 / 官网 / 猎聘",
+                "location": "上海",
+                "salary": "15-25K",
+                "tags": ["玩法策划", "系统设计", "数值", "UE/Unity"],
+                "jd_text": "岗位职责：\n- 负责核心玩法机制、系统规则和关卡体验设计。\n- 基于数据和玩家反馈迭代版本体验。\n\n任职要求：\n- 有完整项目或 Demo 经验。\n- 能输出清晰的策划案、原型和验收标准。",
+                "notes": "重点测试玩法循环、系统拆解和项目落地表达。",
+                "created_at": now,
+                "updated_at": now,
+            }
+        ],
+    }
+    return json.dumps(sample, ensure_ascii=False, indent=2)
+
+
+def job_import_supported_fields() -> dict[str, list[str]]:
+    return {
+        "岗位列表容器": ["jobs", "data", "items", "results", "positions", "job_list", "jobList"],
+        "公司": ["company", "company_name", "companyName", "company_full_name", "companyFullName", "employer"],
+        "岗位名称": ["title", "job_title", "jobTitle", "position", "position_name", "positionName", "job_name", "jobName", "name"],
+        "岗位链接": ["source_url", "sourceUrl", "url", "job_url", "jobUrl", "apply_url", "applyUrl", "link"],
+        "平台": ["platform", "source", "site", "channel"],
+        "地点": ["location", "city", "work_location", "workLocation", "address"],
+        "薪资": ["salary", "salary_range", "salaryRange", "compensation", "pay"],
+        "标签": ["tags", "keywords", "skills", "labels"],
+        "JD 正文": ["jd_text", "job_description", "jobDescription", "description", "desc", "content"],
+        "岗位要求": ["job_requirements", "jobRequirements", "requirements", "qualification", "qualifications"],
+        "工作职责": ["duties", "responsibilities", "job_responsibilities", "jobResponsibilities"],
+        "加分项": ["preferred", "preferred_skills", "preferredSkills", "nice_to_have", "niceToHave"],
+        "备注": ["notes", "note", "remark", "memo"],
+    }
+
+
+def _plain_text_workspace(text: str) -> JobWorkspace:
+    now = _now()
+    return JobWorkspace(
+        jobs=[
+            JobPosting(
+                job_id=_new_id(),
+                title="导入的岗位",
+                jd_text=text,
+                status="待分析",
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+    )
+
+
+def _new_import_report(
+    source_type: str,
+    imported_count: int = 0,
+    skipped_count: int = 0,
+    recognized_fields: list[str] | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "source_type": source_type,
+        "imported_count": imported_count,
+        "skipped_count": skipped_count,
+        "recognized_fields": recognized_fields or [],
+        "warnings": warnings or [],
+        "errors": errors or [],
+    }
+
+
+def _workspace_warnings(workspace: JobWorkspace) -> list[str]:
+    warnings: list[str] = []
+    if not workspace.jobs:
+        warnings.append("岗位列表为空。请确认 JSON 中存在 jobs/data/items 等岗位数组。")
+    missing_jd = sum(1 for job in workspace.jobs if not job.jd_text.strip())
+    if missing_jd:
+        warnings.append(f"{missing_jd} 个岗位缺少 JD 正文，后续无法分析。")
+    missing_title = sum(1 for job in workspace.jobs if not job.title.strip())
+    if missing_title:
+        warnings.append(f"{missing_title} 个岗位缺少岗位名称，系统会尝试从 JD 第一行推断。")
+    return warnings
+
+
+def _recognized_workspace_fields(data: Any) -> list[str]:
+    if not isinstance(data, dict):
+        return []
+    recognized: list[str] = []
+    for key in ("version", "active_job_id", "jobs"):
+        if key in data:
+            recognized.append(key)
+    return recognized
+
+
+def _parse_flexible_jobs_payload_with_report(data: Any) -> tuple[JobWorkspace, dict[str, Any]]:
+    jobs_raw = _extract_jobs_list(data)
+    root_company = _extract_company_name(_pick(data, "company", "company_name", "companyName")) if isinstance(data, dict) else ""
+    jobs: list[JobPosting] = []
+    now = _now()
+    seen: set[str] = set()
+    skipped_count = 0
+    warnings: list[str] = []
+    recognized_fields: set[str] = set()
+    for raw in jobs_raw:
+        if not isinstance(raw, dict):
+            skipped_count += 1
+            continue
+        recognized_fields.update(_recognized_job_fields(raw))
+        job = _job_from_mapping(raw, root_company, now)
+        if not job.jd_text.strip() and not job.title.strip():
+            skipped_count += 1
+            continue
+        dedupe_key = "|".join(
+            [
+                job.source_url.strip().lower(),
+                job.company.strip().lower(),
+                job.title.strip().lower(),
+                job.jd_text[:200].strip().lower(),
             ]
         )
+        if dedupe_key in seen:
+            skipped_count += 1
+            continue
+        seen.add(dedupe_key)
+        jobs.append(job)
+    if not jobs_raw:
+        warnings.append("没有找到岗位数组。支持的容器字段包括 jobs、data、items、results、positions、job_list、jobList。")
+    workspace = JobWorkspace(active_job_id=jobs[0].job_id if jobs else "", jobs=jobs)
+    warnings.extend(_workspace_warnings(workspace))
+    return workspace, _new_import_report(
+        source_type="flexible_jobs_json",
+        imported_count=len(jobs),
+        skipped_count=skipped_count,
+        recognized_fields=sorted(recognized_fields),
+        warnings=warnings,
+    )
+
+
+def _recognized_job_fields(raw: dict[str, Any]) -> list[str]:
+    recognized: list[str] = []
+    for group in job_import_supported_fields().values():
+        for key in group:
+            if key in raw:
+                recognized.append(key)
+    return recognized
 
 
 def job_workspace_to_json_text(workspace: JobWorkspace) -> str:
@@ -176,31 +358,8 @@ def shortlist_to_json_text(workspace: JobWorkspace) -> str:
 
 
 def _parse_flexible_jobs_payload(data: Any) -> JobWorkspace:
-    jobs_raw = _extract_jobs_list(data)
-    root_company = _extract_company_name(_pick(data, "company", "company_name", "companyName")) if isinstance(data, dict) else ""
-    jobs: list[JobPosting] = []
-    now = _now()
-    seen: set[str] = set()
-    for raw in jobs_raw:
-        if not isinstance(raw, dict):
-            continue
-        job = _job_from_mapping(raw, root_company, now)
-        if not job.jd_text.strip() and not job.title.strip():
-            continue
-        dedupe_key = "|".join(
-            [
-                job.source_url.strip().lower(),
-                job.company.strip().lower(),
-                job.title.strip().lower(),
-                job.jd_text[:200].strip().lower(),
-            ]
-        )
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        jobs.append(job)
-    active_job_id = jobs[0].job_id if jobs else ""
-    return JobWorkspace(active_job_id=active_job_id, jobs=jobs)
+    workspace, _report = _parse_flexible_jobs_payload_with_report(data)
+    return workspace
 
 
 def _looks_like_native_workspace(data: Any) -> bool:
