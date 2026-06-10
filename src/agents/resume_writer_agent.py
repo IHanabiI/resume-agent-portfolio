@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
-from src.schemas import CandidateProfile, EvidenceItem, GapAnalysis, JobAnalysis, TailoredResumeResult, UserAnswer
+from src.schemas import (
+    CandidateProfile,
+    EvidenceItem,
+    GapAnalysis,
+    JobAnalysis,
+    ResumeAlignmentPlan,
+    ResumeStarProfile,
+    TailoredResumeResult,
+    UserAnswer,
+)
 
 
 def write_resume(
@@ -11,6 +20,8 @@ def write_resume(
     gap: GapAnalysis,
     resume_text: str,
     user_answers: list[UserAnswer],
+    resume_star_profile: ResumeStarProfile | None = None,
+    alignment_plan: ResumeAlignmentPlan | None = None,
     memory_text: str = "",
     github_context: str = "",
     llm: LLMClient | None = None,
@@ -22,6 +33,8 @@ def write_resume(
         (
             f"{prompt}\n\n候选人信息：\n{pretty_json(candidate)}\n\n岗位分析：\n{pretty_json(job)}"
             f"\n\n缺口分析：\n{pretty_json(gap)}"
+            f"\n\nSTAR 证据：\n{pretty_json(resume_star_profile)}"
+            f"\n\n岗位对齐改写计划：\n{pretty_json(alignment_plan)}"
             f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
             f"\n\n原始简历全文：\n{resume_text}"
             f"\n\n个人记忆库：\n{memory_text}"
@@ -30,11 +43,17 @@ def write_resume(
         TailoredResumeResult,
     )
     if not result:
-        return _fallback_write(candidate, job, gap, user_answers, memory_text, github_context)
+        return _fallback_write(candidate, job, gap, user_answers, memory_text, github_context, alignment_plan)
     if not result.opener_markdown:
         result.opener_markdown = _build_opener(candidate, job, gap, github_context)
     if not result.changelog_markdown:
-        result.changelog_markdown = _build_changelog(job, gap, result.integrated_keywords, result.still_missing_info)
+        result.changelog_markdown = _build_changelog(
+            job,
+            gap,
+            result.integrated_keywords,
+            result.still_missing_info,
+            alignment_plan,
+        )
     return result
 
 
@@ -45,6 +64,7 @@ def _fallback_write(
     user_answers: list[UserAnswer],
     memory_text: str,
     github_context: str,
+    alignment_plan: ResumeAlignmentPlan | None = None,
 ) -> TailoredResumeResult:
     lines = [
         f"# {candidate.name or '候选人'}",
@@ -54,7 +74,11 @@ def _fallback_write(
         "",
         "## 个人优势",
     ]
-    strengths = gap.matched_strengths or ["基于现有事实来源进行岗位适配表达，未添加无来源经历。"]
+    strengths = (
+        (alignment_plan.strongest_evidence if alignment_plan else [])
+        or gap.matched_strengths
+        or ["基于现有事实来源进行岗位适配表达，未添加无来源经历。"]
+    )
     for item in strengths[:5]:
         lines.append(f"- {item}")
 
@@ -136,8 +160,18 @@ def _fallback_write(
     return TailoredResumeResult(
         resume_markdown="\n".join(lines),
         opener_markdown=_build_opener(candidate, job, gap, github_context),
-        changelog_markdown=_build_changelog(job, gap, [k for k in job.keywords if k][:12], gap.missing_information[:8]),
-        optimization_notes=["已按 JD 匹配点重排简历结构。", "已纳入个人记忆库和 GitHub 公开证据。", "没有为缺失技能或成果编造经历。"],
+        changelog_markdown=_build_changelog(
+            job,
+            gap,
+            [k for k in job.keywords if k][:12],
+            gap.missing_information[:8],
+            alignment_plan,
+        ),
+        optimization_notes=[
+            "已按岗位对齐计划重排和强化已有事实。",
+            "已纳入个人记忆库和 GitHub 公开证据。",
+            "没有为缺失技能或成果编造经历。",
+        ],
         integrated_keywords=[k for k in job.keywords if k][:12],
         still_missing_info=gap.missing_information[:8],
         evidence_map=evidence,
@@ -177,6 +211,7 @@ def _build_changelog(
     gap: GapAnalysis,
     keywords: list[str],
     missing_info: list[str],
+    alignment_plan: ResumeAlignmentPlan | None = None,
 ) -> str:
     lines = [
         "## 已做调整",
@@ -184,6 +219,10 @@ def _build_changelog(
         "- 优先保留有原始简历、个人记忆、GitHub 或用户回答支撑的内容。",
         "- 对缺少证据的能力或成果保持保守表达，没有编造项目、数字或职责。",
     ]
+    if alignment_plan and alignment_plan.required_actions:
+        lines.extend(["", "## 岗位对齐计划"])
+        for action in alignment_plan.required_actions[:8]:
+            lines.append(f"- {action.target}：{action.instruction}")
     if keywords:
         lines.extend(["", "## 关联 JD 关键词"])
         for item in keywords[:12]:

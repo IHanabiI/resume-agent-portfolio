@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.agents.alignment_planner_agent import build_alignment_plan
 from src.agents.fact_checker_agent import fact_check_resume
 from src.agents.jd_analyzer_agent import analyze_jd
 from src.agents.job_fit_agent import assess_job_fit
@@ -71,6 +72,23 @@ def sufficiency_node(state: ResumeAgentState) -> ResumeAgentState:
     return {"sufficiency_report": report, "job_fit_report": fit}
 
 
+def alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
+    llm = get_llm_client()
+    plan = build_alignment_plan(
+        state["candidate_profile"],
+        state["job_analysis"],
+        state["gap_analysis"],
+        state["resume_text"],
+        state.get("user_answers", []),
+        state.get("resume_star_profile"),
+        state.get("resume_quality_report"),
+        state.get("memory_text", ""),
+        state.get("github_context", ""),
+        llm,
+    )
+    return {"alignment_plan": plan}
+
+
 def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
     llm = get_llm_client()
     result = write_resume(
@@ -79,6 +97,8 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         state["gap_analysis"],
         state["resume_text"],
         state.get("user_answers", []),
+        state.get("resume_star_profile"),
+        state.get("alignment_plan"),
         state.get("memory_text", ""),
         state.get("github_context", ""),
         llm,

@@ -4,6 +4,7 @@ from langgraph.graph import END, StateGraph
 
 from src.graph.nodes import (
     analyze_jd_node,
+    alignment_plan_node,
     fact_check_node,
     match_gap_node,
     parse_resume_node,
@@ -37,9 +38,11 @@ def build_analysis_graph():
 
 def build_generation_graph():
     graph = StateGraph(ResumeAgentState)
+    graph.add_node("plan_alignment", alignment_plan_node)
     graph.add_node("write_resume", write_resume_node)
     graph.add_node("fact_check", fact_check_node)
-    graph.set_entry_point("write_resume")
+    graph.set_entry_point("plan_alignment")
+    graph.add_edge("plan_alignment", "write_resume")
     graph.add_edge("write_resume", "fact_check")
     graph.add_edge("fact_check", END)
     return graph.compile()

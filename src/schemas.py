@@ -167,6 +167,41 @@ class GapAnalysis(BaseModel):
     questions_to_user: list[QuestionItem] = Field(default_factory=list)
 
 
+class ResumeAlignmentAction(BaseModel):
+    action_type: Literal[
+        "section_reorder",
+        "item_reorder",
+        "rewrite",
+        "skill_reorder",
+        "placeholder",
+        "confirm_inference",
+        "keep",
+    ] = "rewrite"
+    target: str = ""
+    source_evidence: str = ""
+    jd_reason: str = ""
+    instruction: str = ""
+    allowed_change: Literal[
+        "reorder_only",
+        "rewrite_existing",
+        "insert_placeholder",
+        "confirm_inference",
+        "keep",
+    ] = "rewrite_existing"
+    priority: int = Field(default=3, ge=1, le=5)
+
+
+class ResumeAlignmentPlan(BaseModel):
+    target_role: str = ""
+    strategy_summary: str = ""
+    strongest_evidence: list[str] = Field(default_factory=list)
+    required_actions: list[ResumeAlignmentAction] = Field(default_factory=list)
+    skill_adjustments: list[ResumeAlignmentAction] = Field(default_factory=list)
+    placeholders: list[ResumeAlignmentAction] = Field(default_factory=list)
+    do_not_use_claims: list[str] = Field(default_factory=list)
+    format_constraints: list[str] = Field(default_factory=list)
+
+
 class UserAnswer(BaseModel):
     question: str
     answer: str = ""
