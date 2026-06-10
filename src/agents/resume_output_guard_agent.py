@@ -6,6 +6,7 @@ from src.schemas import ResumeStructure
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+BULLET_RE = re.compile(r"^(\s*)([-*+•]|\d+[.、)])\s+(.+?)\s*$")
 INTERNAL_MARKER_RE = re.compile(
     r"\b(?:L\d{3}|S\d{3}|line_id|section_id|alignment_plan|ResumeAlignmentPlan|ResumeStructure)\b",
     re.IGNORECASE,
@@ -172,17 +173,87 @@ def _normalize_blank_lines(lines: list[str]) -> str:
 
 def _structure_warnings(cleaned: str, original_structure: ResumeStructure) -> list[str]:
     warnings: list[str] = []
-    cleaned_headings = {
-        HEADING_RE.match(line.strip()).group(2).strip()
-        for line in cleaned.splitlines()
-        if HEADING_RE.match(line.strip())
-    }
-    for section in original_structure.sections:
-        if not section.title or section.section_id == "S000":
-            continue
-        if section.title not in cleaned_headings:
-            warnings.append(f"原简历章节可能缺失或被改名：{section.title}")
+    original_sections = _original_section_signatures(original_structure)
+    final_sections = _markdown_section_signatures(cleaned)
+    if not original_sections:
+        return warnings
+
+    original_titles = [section["title"] for section in original_sections]
+    final_titles = [section["title"] for section in final_sections]
+    original_norms = [_normalize_title(title) for title in original_titles]
+    final_norms = [_normalize_title(title) for title in final_titles]
+    final_norm_set = set(final_norms)
+    original_norm_set = set(original_norms)
+
+    missing = [title for title in original_titles if _normalize_title(title) not in final_norm_set]
+    added = [title for title in final_titles if _normalize_title(title) not in original_norm_set]
+    if missing:
+        warnings.append("原简历章节可能缺失或被改名：" + "、".join(missing[:8]))
+    if added:
+        warnings.append("最终简历出现原文没有的章节：" + "、".join(added[:8]))
+
+    expected_order = [title for title in original_norms if title in final_norm_set]
+    actual_order = [title for title in final_norms if title in original_norm_set]
+    if expected_order and actual_order and expected_order != actual_order:
+        warnings.append("原简历章节顺序可能被改变；参考项目要求顶层章节顺序冻结。")
+
+    original_by_title = {section["norm_title"]: section for section in original_sections}
+    final_by_title = {section["norm_title"]: section for section in final_sections}
+    for norm_title in original_norm_set & final_norm_set:
+        original = original_by_title[norm_title]
+        final = final_by_title[norm_title]
+        if original["heading_level"] != final["heading_level"]:
+            warnings.append(
+                f"章节标题层级可能被改变：{original['title']} "
+                f"从 H{original['heading_level']} 变为 H{final['heading_level']}"
+            )
+        original_bullets = original["bullet_count"]
+        final_bullets = final["bullet_count"]
+        if original_bullets and original_bullets != final_bullets:
+            warnings.append(
+                f"章节列表数量发生变化：{original['title']} "
+                f"原 {original_bullets} 条，现 {final_bullets} 条；参考项目要求列表条目一行一条且数量尽量冻结。"
+            )
     return warnings
+
+
+def _original_section_signatures(original_structure: ResumeStructure) -> list[dict[str, int | str]]:
+    sections: list[dict[str, int | str]] = []
+    for section in original_structure.sections:
+        if not section.title or section.section_id == "S000" or section.heading_level <= 1:
+            continue
+        sections.append(
+            {
+                "title": section.title,
+                "norm_title": _normalize_title(section.title),
+                "heading_level": section.heading_level,
+                "bullet_count": sum(1 for line in section.lines if line.line_type == "bullet"),
+            }
+        )
+    return sections
+
+
+def _markdown_section_signatures(markdown: str) -> list[dict[str, int | str]]:
+    sections: list[dict[str, int | str]] = []
+    current: dict[str, int | str] | None = None
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        heading = HEADING_RE.match(line)
+        if heading:
+            title = heading.group(2).strip()
+            current = {
+                "title": title,
+                "norm_title": _normalize_title(title),
+                "heading_level": len(heading.group(1)),
+                "bullet_count": 0,
+            }
+            sections.append(current)
+            continue
+        if current and BULLET_RE.match(line):
+            current["bullet_count"] = int(current["bullet_count"]) + 1
+    return [section for section in sections if int(section["heading_level"]) > 1]
 
 
 def _is_forbidden_title(title: str, original_titles: set[str]) -> bool:
