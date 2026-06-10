@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.agents.resume_plan_binding_agent import bind_alignment_plan_targets
 from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
 from src.schemas import (
@@ -48,8 +49,17 @@ def build_alignment_plan(
     )
     if result:
         result.format_constraints = _merge_constraints(result.format_constraints)
-        return result
-    return _fallback_plan(job, gap, resume_star_profile, resume_quality_report, user_answers, memory_text, github_context)
+        return bind_alignment_plan_targets(result, resume_structure)
+    fallback = _fallback_plan(
+        job,
+        gap,
+        resume_star_profile,
+        resume_quality_report,
+        user_answers,
+        memory_text,
+        github_context,
+    )
+    return bind_alignment_plan_targets(fallback, resume_structure)
 
 
 def _fallback_plan(

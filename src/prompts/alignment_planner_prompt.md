@@ -29,6 +29,9 @@ target 写法：
 - 尽量写成 `Sxxx/章节标题/Lxxx` 或 `章节标题 - 原条目摘要`。
 - 如果要调整一条列表项，target 必须包含对应 line_id 或原文摘要。
 - 如果要调整一个章节内顺序，target 必须包含 section_id 或章节标题。
+- line_id / section_id 必须来自“原简历结构骨架”，不能自己编造。
+- 如果找不到可靠 line_id，target 必须包含原文中的连续短句，方便程序二次绑定。
+- 每条 required_actions / skill_adjustments / placeholders 都必须指向一个具体原文位置、具体章节，或明确说明“缺少原文位置，只能作为待补充信息”。
 
 action_type 取值：
 - section_reorder：经历/项目顺序调整。
