@@ -8,6 +8,7 @@
 - 空壳经历不能被补写，只能生成 placeholder 或建议用户补充。
 - 没有数字时不能编造数字，只能插入 `[请填写：xxx]`。
 - 轻度推断必须标记为 confirm_inference，并要求最终简历保留 `[需用户确认：xxx]`。
+- 优先引用“原简历结构骨架”里的 section_id、section_title、line_id、原文，便于 writer 定位修改位置。
 
 计划必须覆盖参考项目式三项下限：
 1. section_reorder：同章节内，哪些项目/经历应前移或保持。
@@ -23,6 +24,11 @@
 - placeholders：需要插入 `[请填写：xxx]` 或 `[需用户确认：xxx]` 的位置。
 - do_not_use_claims：明确不能写入简历的内容，例如 JD 有要求但用户没有证据。
 - format_constraints：最终 writer 必须遵守的格式规则。
+
+target 写法：
+- 尽量写成 `Sxxx/章节标题/Lxxx` 或 `章节标题 - 原条目摘要`。
+- 如果要调整一条列表项，target 必须包含对应 line_id 或原文摘要。
+- 如果要调整一个章节内顺序，target 必须包含 section_id 或章节标题。
 
 action_type 取值：
 - section_reorder：经历/项目顺序调整。

@@ -8,6 +8,7 @@ from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
 from src.agents.resume_parser_agent import parse_resume
 from src.agents.resume_quality_agent import assess_resume_quality
+from src.agents.resume_structure_agent import parse_resume_structure
 from src.agents.resume_writer_agent import write_resume
 from src.agents.sufficiency_agent import assess_information_sufficiency
 from src.graph.state import ResumeAgentState
@@ -21,6 +22,7 @@ def parse_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         "candidate_profile": parse_resume(state["resume_text"], llm),
         "resume_quality_report": quality,
         "resume_star_profile": star,
+        "resume_structure": parse_resume_structure(state["resume_text"]),
     }
 
 
@@ -82,6 +84,7 @@ def alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("user_answers", []),
         state.get("resume_star_profile"),
         state.get("resume_quality_report"),
+        state.get("resume_structure"),
         state.get("memory_text", ""),
         state.get("github_context", ""),
         llm,
@@ -99,6 +102,7 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("user_answers", []),
         state.get("resume_star_profile"),
         state.get("alignment_plan"),
+        state.get("resume_structure"),
         state.get("memory_text", ""),
         state.get("github_context", ""),
         llm,

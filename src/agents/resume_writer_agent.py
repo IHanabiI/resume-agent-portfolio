@@ -9,6 +9,7 @@ from src.schemas import (
     JobAnalysis,
     ResumeAlignmentPlan,
     ResumeStarProfile,
+    ResumeStructure,
     TailoredResumeResult,
     UserAnswer,
 )
@@ -22,6 +23,7 @@ def write_resume(
     user_answers: list[UserAnswer],
     resume_star_profile: ResumeStarProfile | None = None,
     alignment_plan: ResumeAlignmentPlan | None = None,
+    resume_structure: ResumeStructure | None = None,
     memory_text: str = "",
     github_context: str = "",
     llm: LLMClient | None = None,
@@ -33,6 +35,7 @@ def write_resume(
         (
             f"{prompt}\n\n候选人信息：\n{pretty_json(candidate)}\n\n岗位分析：\n{pretty_json(job)}"
             f"\n\n缺口分析：\n{pretty_json(gap)}"
+            f"\n\n原简历结构骨架：\n{pretty_json(resume_structure)}"
             f"\n\nSTAR 证据：\n{pretty_json(resume_star_profile)}"
             f"\n\n岗位对齐改写计划：\n{pretty_json(alignment_plan)}"
             f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"

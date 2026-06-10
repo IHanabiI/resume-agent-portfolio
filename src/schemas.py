@@ -118,6 +118,29 @@ class ResumeStarProfile(BaseModel):
     items: list[ResumeStarItem] = Field(default_factory=list)
 
 
+class ResumeLine(BaseModel):
+    line_id: str = ""
+    text: str = ""
+    line_type: Literal["heading", "bullet", "paragraph"] = "paragraph"
+    heading_level: int = 0
+    section_id: str = ""
+    section_title: str = ""
+
+
+class ResumeSection(BaseModel):
+    section_id: str = ""
+    title: str = ""
+    heading_level: int = 0
+    lines: list[ResumeLine] = Field(default_factory=list)
+
+
+class ResumeStructure(BaseModel):
+    resume_hash: str = ""
+    summary: str = ""
+    sections: list[ResumeSection] = Field(default_factory=list)
+    lines: list[ResumeLine] = Field(default_factory=list)
+
+
 class ResumeQualityReport(BaseModel):
     score: int = Field(default=0, ge=0, le=100)
     status: Literal["weak", "usable", "strong"] = "weak"

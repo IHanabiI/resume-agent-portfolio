@@ -10,6 +10,7 @@ from src.schemas import (
     ResumeAlignmentPlan,
     ResumeQualityReport,
     ResumeStarProfile,
+    ResumeStructure,
     UserAnswer,
 )
 
@@ -22,6 +23,7 @@ def build_alignment_plan(
     user_answers: list[UserAnswer],
     resume_star_profile: ResumeStarProfile | None = None,
     resume_quality_report: ResumeQualityReport | None = None,
+    resume_structure: ResumeStructure | None = None,
     memory_text: str = "",
     github_context: str = "",
     llm: LLMClient | None = None,
@@ -35,6 +37,7 @@ def build_alignment_plan(
             f"\n\n岗位分析：\n{pretty_json(job)}"
             f"\n\n匹配缺口：\n{pretty_json(gap)}"
             f"\n\n简历质量评估：\n{pretty_json(resume_quality_report)}"
+            f"\n\n原简历结构骨架：\n{pretty_json(resume_structure)}"
             f"\n\nSTAR 证据：\n{pretty_json(resume_star_profile)}"
             f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
             f"\n\n原始简历全文：\n{resume_text}"

@@ -12,6 +12,7 @@ from src.schemas import (
     ResumeAlignmentPlan,
     ResumeQualityReport,
     ResumeStarProfile,
+    ResumeStructure,
     TailoredResumeResult,
     UserAnswer,
 )
@@ -25,6 +26,7 @@ class ResumeAgentState(TypedDict, total=False):
     candidate_profile: CandidateProfile
     resume_quality_report: ResumeQualityReport
     resume_star_profile: ResumeStarProfile
+    resume_structure: ResumeStructure
     job_analysis: JobAnalysis
     gap_analysis: GapAnalysis
     sufficiency_report: InformationSufficiencyReport
