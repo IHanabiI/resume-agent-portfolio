@@ -6,6 +6,7 @@ from src.schemas import ResumeAlignmentAction, ResumeAlignmentPlan, ResumeLine, 
 
 
 LOCATOR_RE = re.compile(r"\bS\d{3}/.*?/L\d{3}\b", re.IGNORECASE)
+CONCRETE_ACTION_TYPES = {"rewrite", "item_reorder", "skill_reorder", "placeholder"}
 
 
 def bind_alignment_plan_targets(
@@ -40,15 +41,42 @@ def _all_actions(plan: ResumeAlignmentPlan) -> list[ResumeAlignmentAction]:
 def _best_line_for_action(action: ResumeAlignmentAction, lines: list[ResumeLine]) -> ResumeLine | None:
     best_line: ResumeLine | None = None
     best_score = 0
+    best_specific_score = 0
     for line in lines:
         score = _line_score(action, line)
         if score > best_score:
             best_score = score
+            best_specific_score = _specific_line_score(action, line)
             best_line = line
+    if not best_line:
+        return None
+    if action.action_type in CONCRETE_ACTION_TYPES:
+        if best_line.line_type == "heading":
+            return None
+        if best_specific_score < 20:
+            return None
+        return best_line if best_score >= 20 else None
     return best_line if best_score >= 5 else None
 
 
 def _line_score(action: ResumeAlignmentAction, line: ResumeLine) -> int:
+    haystack = _action_haystack(action)
+    compact_haystack = _compact(haystack)
+    score = _specific_line_score(action, line)
+
+    if line.section_id and line.section_id.lower() in haystack.lower():
+        score += 30
+    if line.section_title and _compact(line.section_title) in compact_haystack:
+        score += 10
+
+    if action.action_type == "skill_reorder" and _looks_like_skill_line(line):
+        score += 15
+    if action.action_type in {"rewrite", "item_reorder"} and line.line_type == "heading":
+        score -= 8
+    return score
+
+
+def _specific_line_score(action: ResumeAlignmentAction, line: ResumeLine) -> int:
     haystack = _action_haystack(action)
     compact_haystack = _compact(haystack)
     compact_line = _compact(line.text)
@@ -56,23 +84,13 @@ def _line_score(action: ResumeAlignmentAction, line: ResumeLine) -> int:
 
     if line.line_id and line.line_id.lower() in haystack.lower():
         score += 100
-    if line.section_id and line.section_id.lower() in haystack.lower():
-        score += 30
-    if line.section_title and _compact(line.section_title) in compact_haystack:
-        score += 10
     if compact_line and compact_line in compact_haystack:
         score += 40
     if _compact(action.target) and _compact(action.target) in compact_line:
         score += 20
     if _compact(action.source_evidence) and _compact(action.source_evidence) in compact_line:
         score += 30
-
     score += min(12, _token_overlap(line.text, haystack) * 3)
-
-    if action.action_type == "skill_reorder" and _looks_like_skill_line(line):
-        score += 15
-    if action.action_type in {"rewrite", "item_reorder"} and line.line_type == "heading":
-        score -= 8
     return score
 
 

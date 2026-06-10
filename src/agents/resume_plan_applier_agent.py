@@ -7,6 +7,7 @@ from src.schemas import ResumeAlignmentAction, ResumeAlignmentPlan, ResumeLine, 
 
 EXPERIENCE_SECTION_TERMS = ("工作", "项目", "实习", "经历", "实践", "创业")
 SKILL_SECTION_TERMS = ("技能", "技术", "能力", "工具", "栈")
+CONCRETE_ACTION_TYPES = {"rewrite", "item_reorder", "skill_reorder", "placeholder"}
 
 
 def build_ordered_resume_draft(
@@ -171,10 +172,11 @@ def _action_matches_line(action: ResumeAlignmentAction, line: ResumeLine) -> boo
     line_text = _plain_line_text(line.text).lower()
     if line.line_id and line.line_id.lower() in target_text:
         return True
-    if line.section_id and line.section_id.lower() in target_text:
-        return True
-    if line.section_title and line.section_title.lower() in target_text:
-        return True
+    if action.action_type not in CONCRETE_ACTION_TYPES:
+        if line.section_id and line.section_id.lower() in target_text:
+            return True
+        if line.section_title and line.section_title.lower() in target_text:
+            return True
     compact_line = _compact(line_text)
     compact_target = _compact(target_text)
     if compact_line and (compact_line in compact_target or compact_target in compact_line):
