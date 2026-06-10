@@ -25,7 +25,11 @@ st.set_page_config(page_title="简历定制 Agent", layout="wide")
 def load_app_modules():
     from src.config import OUTPUT_DIR, get_settings
     from src.exporter.docx_exporter import markdown_to_docx_bytes, markdown_to_template_docx_bytes, save_docx
-    from src.exporter.html_resume_exporter import build_editable_resume_html, extract_first_docx_image_data_uri
+    from src.exporter.html_resume_exporter import (
+        build_editable_resume_html,
+        build_job_delivery_html,
+        extract_first_docx_image_data_uri,
+    )
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
@@ -104,6 +108,7 @@ def load_app_modules():
         "markdown_to_docx_bytes": markdown_to_docx_bytes,
         "markdown_to_template_docx_bytes": markdown_to_template_docx_bytes,
         "build_editable_resume_html": build_editable_resume_html,
+        "build_job_delivery_html": build_job_delivery_html,
         "extract_first_docx_image_data_uri": extract_first_docx_image_data_uri,
         "save_docx": save_docx,
         "build_full_markdown": build_full_markdown,
@@ -981,10 +986,11 @@ def _resume_export_title() -> str:
     return " - ".join(part for part in parts if part)
 
 
-def _html_resume_storage_key() -> str:
+def _html_resume_storage_key(content_seed: str = "") -> str:
     active = st.session_state.get("active_job_id", "") or "current"
     workspace = st.session_state.get("workspace_id", "") or "local"
-    raw = f"{workspace}:{active}:{_resume_export_title()}"
+    content_hash = hashlib.sha1((content_seed or "").encode("utf-8")).hexdigest()[:10]
+    raw = f"{workspace}:{active}:{_resume_export_title()}:{content_hash}"
     return "resume-agent:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -1688,24 +1694,31 @@ def render_generation_section(modules) -> None:
 
         template_bytes = _get_resume_template_docx_bytes()
         photo_data_uri = modules["extract_first_docx_image_data_uri"](template_bytes) if template_bytes else ""
-        storage_key = _html_resume_storage_key()
-        html_resume = modules["build_editable_resume_html"](
-            st.session_state.editable_resume_markdown or "",
+        storage_key = _html_resume_storage_key(st.session_state.editable_resume_markdown or "")
+        active_job = _find_job(st.session_state.job_workspace, st.session_state.active_job_id)
+        html_resume = modules["build_job_delivery_html"](
+            resume_markdown=st.session_state.editable_resume_markdown or "",
+            opener_markdown=getattr(tailored, "opener_markdown", ""),
+            changelog_markdown=getattr(tailored, "changelog_markdown", ""),
             title=_resume_export_title(),
+            company=st.session_state.get("job_company", "") or getattr(active_job, "company", ""),
+            job_title=st.session_state.get("job_title", "") or getattr(active_job, "title", ""),
+            match_score=getattr(active_job, "match_score", 0) if active_job else 0,
+            source_url=getattr(active_job, "source_url", "") if active_job else "",
             photo_data_uri=photo_data_uri,
             storage_key=storage_key,
         )
 
-        st.markdown("**可编辑 A4 简历视图**")
-        st.caption("下方预览和下载的 HTML 都支持直接编辑；下载 HTML 后点击“打印 / 保存 PDF”，用浏览器保存为 PDF。若要写回 Agent 岗位库，请修改上方 Markdown 后点击“保存微调到当前岗位”。")
-        components.html(html_resume, height=760, scrolling=True)
+        st.markdown("**可编辑岗位交付 HTML**")
+        st.caption("下方预览和下载的 HTML 内含定制简历、开场白、改动说明三个标签；简历标签可直接编辑并自动保存，导出 PDF 只导出简历正文。若要写回 Agent 岗位库，请修改上方 Markdown 后点击“保存微调到当前岗位”。")
+        components.html(html_resume, height=820, scrolling=True)
 
         primary_col1, primary_col2, primary_col3 = st.columns(3)
         with primary_col1:
             st.download_button(
-                "下载可编辑 HTML 简历",
+                "下载可编辑交付 HTML",
                 data=html_resume.encode("utf-8"),
-                file_name="tailored_resume.html",
+                file_name="tailored_delivery.html",
                 mime="text/html",
             )
         with primary_col2:
