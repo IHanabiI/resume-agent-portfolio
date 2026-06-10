@@ -162,6 +162,7 @@ def init_state() -> None:
         "workspace_loaded": False,
         "workspace_updated_at": "",
         "workspace_upload_done": False,
+        "editable_resume_markdown": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -778,9 +779,10 @@ def render_questions(modules, gap, quality=None) -> None:
                 st.session_state.generation_state = modules["run_generation"](state)
                 tailored = st.session_state.generation_state["tailored_resume"]
                 fact_check = st.session_state.generation_state["fact_check"]
-                full_md = modules["build_full_markdown"](tailored, fact_check)
-                modules["save_markdown"](full_md, modules["OUTPUT_DIR"])
-                modules["save_docx"](full_md, modules["OUTPUT_DIR"])
+                resume_md = fact_check.final_resume_markdown or tailored.resume_markdown
+                st.session_state.editable_resume_markdown = resume_md
+                modules["save_markdown"](resume_md, modules["OUTPUT_DIR"], "tailored_resume.md")
+                modules["save_docx"](resume_md, modules["OUTPUT_DIR"], "tailored_resume.docx")
                 if st.session_state.active_job_id:
                     fit = st.session_state.analysis_state.get("job_fit_report") if st.session_state.analysis_state else None
                     st.session_state.job_workspace = modules["update_job_status"](
@@ -983,6 +985,7 @@ def _load_job_into_session(job, modules=None) -> None:
     st.session_state.job_description = job.jd_text
     st.session_state.analysis_state = None
     st.session_state.generation_state = _job_package_to_generation_state(job, modules) if modules else None
+    st.session_state.editable_resume_markdown = job.package_resume_markdown or ""
     st.session_state.cumulative_answers = []
     st.session_state.session_context_text = ""
     st.session_state.question_round = 1
@@ -1449,16 +1452,77 @@ def _merge_memory_candidates_into_text(memory_text: str, candidates, round_numbe
     return "\n".join(lines).strip()
 
 
+def _save_edited_resume_package(modules, tailored, fact_check) -> None:
+    edited_resume = st.session_state.editable_resume_markdown.strip()
+    if not edited_resume:
+        st.warning("简历正文为空，未保存。")
+        return
+    if hasattr(fact_check, "final_resume_markdown"):
+        fact_check.final_resume_markdown = edited_resume
+    if hasattr(tailored, "resume_markdown"):
+        tailored.resume_markdown = edited_resume
+    if st.session_state.active_job_id:
+        placeholders = _extract_placeholders(
+            "\n\n".join(
+                [
+                    edited_resume,
+                    getattr(tailored, "opener_markdown", ""),
+                    getattr(tailored, "changelog_markdown", ""),
+                ]
+            )
+        )
+        st.session_state.job_workspace = modules["update_job_package"](
+            st.session_state.job_workspace,
+            st.session_state.active_job_id,
+            edited_resume,
+            getattr(tailored, "opener_markdown", ""),
+            getattr(tailored, "changelog_markdown", ""),
+            getattr(fact_check, "needs_confirmation", []),
+            list(dict.fromkeys(placeholders + getattr(tailored, "still_missing_info", []))),
+            [item.model_dump() if hasattr(item, "model_dump") else item for item in getattr(fact_check, "evidence_map", [])],
+            "tailored_resume.docx",
+        )
+    _auto_save_workspace(modules, modules["get_settings"]())
+
+
 def render_generation_section(modules) -> None:
     state = st.session_state.generation_state
     tailored = state["tailored_resume"]
     fact_check = state["fact_check"]
-    full_markdown = modules["build_full_markdown"](tailored, fact_check)
+    base_resume_markdown = fact_check.final_resume_markdown or tailored.resume_markdown
+    if not st.session_state.get("editable_resume_markdown"):
+        st.session_state.editable_resume_markdown = base_resume_markdown
 
     st.header("岗位交付材料")
     tabs = st.tabs(["定制简历", "开场白", "改动说明", "待确认", "核验信息"])
     with tabs[0]:
-        st.markdown(fact_check.final_resume_markdown or tailored.resume_markdown)
+        st.caption("这里可以在导出前微调简历正文。下载的 Markdown / DOCX 只包含下方简历内容，不包含开场白、改动说明或证据表。")
+        st.session_state.editable_resume_markdown = st.text_area(
+            "可投递简历正文",
+            value=st.session_state.editable_resume_markdown,
+            height=560,
+            key="editable_resume_textarea",
+        )
+        with st.expander("预览可投递简历", expanded=True):
+            st.markdown(st.session_state.editable_resume_markdown or "暂无简历内容。")
+        col_md, col_docx = st.columns(2)
+        with col_md:
+            st.download_button(
+                "下载可投递简历 Markdown",
+                data=(st.session_state.editable_resume_markdown or "").encode("utf-8"),
+                file_name="tailored_resume.md",
+                mime="text/markdown",
+            )
+        with col_docx:
+            st.download_button(
+                "下载可投递简历 DOCX",
+                data=modules["markdown_to_docx_bytes"](st.session_state.editable_resume_markdown or ""),
+                file_name="tailored_resume.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        if st.button("保存微调到当前岗位", key="save_edited_resume"):
+            _save_edited_resume_package(modules, tailored, fact_check)
+            st.success("已保存微调后的简历正文。")
     with tabs[1]:
         st.markdown(tailored.opener_markdown or "暂无开场白。")
         st.download_button(
@@ -1500,19 +1564,6 @@ def render_generation_section(modules) -> None:
                 ),
                 language="json",
             )
-
-    st.download_button(
-        "下载完整 Markdown",
-        data=full_markdown.encode("utf-8"),
-        file_name="job_package.md",
-        mime="text/markdown",
-    )
-    st.download_button(
-        "下载完整 DOCX",
-        data=modules["markdown_to_docx_bytes"](full_markdown),
-        file_name="job_package.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
 
 
 def render_context_section(modules) -> None:
