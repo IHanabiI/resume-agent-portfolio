@@ -1745,6 +1745,7 @@ def render_shortlist_section(modules) -> None:
             help=f"包含 {len(ranked)} 个岗位，其中 {generated_count} 个已有定制简历。可离线打开、切换岗位、编辑简历并导出 PDF。",
         )
 
+    _render_batch_generation_preflight(ranked)
     pending_generation = [job for job in ranked if job.jd_text.strip() and not job.package_resume_markdown]
     st.caption(f"批量生成会处理尚未生成交付包的岗位：{len(pending_generation)} 个。已生成的岗位不会被覆盖。")
     if st.button(
@@ -1777,6 +1778,85 @@ def render_shortlist_section(modules) -> None:
             if selected.notes:
                 st.subheader("备注")
                 st.write(selected.notes)
+
+
+def _render_batch_generation_preflight(jobs) -> None:
+    pending_generation = [job for job in jobs if getattr(job, "jd_text", "").strip() and not getattr(job, "package_resume_markdown", "").strip()]
+    protected_jobs = [job for job in jobs if getattr(job, "package_resume_markdown", "").strip()]
+    skipped_no_jd = [job for job in jobs if not getattr(job, "jd_text", "").strip()]
+    unanalyzed = [
+        job
+        for job in pending_generation
+        if not getattr(job, "match_score", 0) and getattr(job, "status", "") not in ("已分析", "已生成简历")
+    ]
+    risk_jobs = [job for job in pending_generation if getattr(job, "fit_risks", [])]
+    quality = (st.session_state.analysis_state or {}).get("resume_quality_report") if st.session_state.analysis_state else None
+
+    expanded = bool(pending_generation and (unanalyzed or risk_jobs or (quality and getattr(quality, "empty_shell_items", []))))
+    with st.expander("批量生成前检查", expanded=expanded):
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("将生成", len(pending_generation))
+        metric_cols[1].metric("已保护", len(protected_jobs))
+        metric_cols[2].metric("需先分析", len(unanalyzed))
+        metric_cols[3].metric("有风险提示", len(risk_jobs))
+
+        if quality:
+            if getattr(quality, "empty_shell_items", []):
+                st.warning(
+                    "原始简历存在空壳经历。批量生成不会编造这些经历；相关内容可能保持原样，或在交付包中产生待补充/待确认提示。"
+                )
+                st.write("优先补全这些经历：")
+                for item in quality.empty_shell_items[:5]:
+                    st.write(f"- {item}")
+            elif getattr(quality, "status", "") == "weak":
+                st.warning("当前简历质量评估偏弱。可以先生成用于预览，但正式投递前建议补充经历细节和结果。")
+        else:
+            st.info("当前没有可复用的简历质量评估。批量生成时每个岗位仍会重新分析简历与 JD。")
+
+        rows = []
+        for job in jobs:
+            rows.append(
+                {
+                    "公司": getattr(job, "company", "") or "未填写公司",
+                    "岗位": getattr(job, "title", "") or "未命名岗位",
+                    "匹配度": f"{getattr(job, 'match_score', 0)}%" if getattr(job, "match_score", 0) else "未分析",
+                    "处理策略": _batch_generation_strategy(job),
+                    "风险/提示": _batch_generation_hint(job),
+                }
+            )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        if pending_generation:
+            st.caption("批量生成会复用个人记忆库、GitHub 信息和该岗位已保存的问答；不会覆盖已有交付包。")
+        elif protected_jobs:
+            st.caption("所有可生成岗位都已有交付包。如需重做某一份，请进入对应岗位手动生成或先清空该岗位交付包。")
+        elif skipped_no_jd:
+            st.caption("岗位库中没有可生成的 JD，请先补充岗位正文。")
+
+
+def _batch_generation_strategy(job) -> str:
+    if not getattr(job, "jd_text", "").strip():
+        return "跳过：缺少 JD"
+    if getattr(job, "package_resume_markdown", "").strip():
+        return "保护：已有交付包"
+    if not getattr(job, "match_score", 0) and getattr(job, "status", "") not in ("已分析", "已生成简历"):
+        return "会先分析再生成"
+    if getattr(job, "fit_risks", []):
+        return "可生成，需复核"
+    return "可生成"
+
+
+def _batch_generation_hint(job) -> str:
+    risks = [str(item).strip() for item in getattr(job, "fit_risks", []) if str(item).strip()]
+    if risks:
+        return risks[0][:120]
+    if not getattr(job, "jd_text", "").strip():
+        return "没有 JD 正文，无法分析。"
+    if getattr(job, "package_resume_markdown", "").strip():
+        return "批量生成不会覆盖。"
+    if not getattr(job, "match_score", 0):
+        return "尚未分析，生成时会自动补分析。"
+    return getattr(job, "fit_recommendation", "") or "暂无风险提示。"
 
 
 def _render_run_status_panel(workspace) -> None:
