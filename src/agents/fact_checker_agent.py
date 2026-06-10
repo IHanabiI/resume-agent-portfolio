@@ -105,19 +105,10 @@ def _remove_unverified_lines(markdown: str, claims: list[str]) -> str:
         return markdown
     claim_tokens = [_important_tokens(claim) for claim in claims]
     kept: list[str] = []
-    removed_section_added = False
     for line in markdown.splitlines():
         if line.lstrip().startswith("- ") and _line_matches_claim(line, claim_tokens):
             continue
         kept.append(line)
-    if claims:
-        kept.extend(["", "## 待确认信息"])
-        removed_section_added = True
-        for claim in claims[:20]:
-            kept.append(f"- {claim}")
-    if removed_section_added:
-        kept.append("")
-        kept.append("> 上述内容缺少可验证来源，未写入正式简历正文。")
     return "\n".join(kept).strip()
 
 

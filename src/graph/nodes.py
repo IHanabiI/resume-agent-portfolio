@@ -6,6 +6,7 @@ from src.agents.jd_analyzer_agent import analyze_jd
 from src.agents.job_fit_agent import assess_job_fit
 from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
+from src.agents.resume_output_guard_agent import guard_final_resume
 from src.agents.resume_parser_agent import parse_resume
 from src.agents.resume_plan_applier_agent import build_ordered_resume_draft
 from src.agents.resume_quality_agent import assess_resume_quality
@@ -130,4 +131,11 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("github_context", ""),
         llm,
     )
+    final_resume = checked.final_resume_markdown or state["tailored_resume"].resume_markdown
+    guarded_resume, guard_warnings = guard_final_resume(
+        final_resume,
+        state.get("resume_structure"),
+    )
+    checked.final_resume_markdown = guarded_resume
+    checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *guard_warnings]))[:30]
     return {"fact_check": checked}
