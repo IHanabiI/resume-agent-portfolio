@@ -683,12 +683,17 @@ def render_analysis_section(modules) -> None:
         st.write("先补充关键事实，或直接生成岗位交付材料。")
 
     with tabs[1]:
-        render_questions(modules, gap)
+        render_questions(modules, gap, quality)
 
 
-def render_questions(modules, gap) -> None:
+def render_questions(modules, gap, quality=None) -> None:
     st.subheader("补充真实信息")
     st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
+    resume_quality_questions = _resume_quality_questions(quality)
+    if resume_quality_questions:
+        st.markdown("**优先补全简历质量问题**")
+        for question in resume_quality_questions[:3]:
+            st.write(f"- {question.related_jd_requirement}")
     soft_gaps_for_display = _unanswered_soft_gaps(gap)
     hard_gaps_for_display = _unanswered_hard_gaps(gap)
     if soft_gaps_for_display:
@@ -698,7 +703,7 @@ def render_questions(modules, gap) -> None:
     if hard_gaps_for_display:
         st.markdown("**硬技能 / 方法待确认**")
         st.write("、".join(hard_gaps_for_display[:8]))
-    questions = _questions_for_display(gap)
+    questions = resume_quality_questions + _questions_for_display(gap)
     questions = _filter_repeated_questions(questions)
     if not questions:
         st.success("当前没有新的必须补充问题，可以直接生成岗位交付材料。")
@@ -1199,9 +1204,58 @@ def _filter_repeated_questions(questions):
             continue
         if _is_metric_question(question.question) and _answered_requirement(answered_requirements, "结果量化"):
             continue
+        if _is_resume_quality_question(question.related_jd_requirement) and _resume_quality_requirement_answered(
+            question.related_jd_requirement,
+            answered_requirements,
+        ):
+            continue
         seen_current.add(key)
         filtered.append(question)
     return filtered
+
+
+def _resume_quality_questions(quality):
+    if not quality:
+        return []
+    questions = []
+    for item in getattr(quality, "empty_shell_items", [])[:3]:
+        label = f"空壳经历：{item}"
+        questions.append(
+            QuestionItem(
+                question=(
+                    f"简历中这段经历目前只有标题或背景，缺少具体内容：「{item}」。"
+                    "请补充你实际做了什么、怎么做、交付了什么、最后产生了什么结果；"
+                    "如果这段经历不想写入简历，请回答“跳过”。"
+                ),
+                why_needed="空壳经历会被参考项目式 STAR 评估跳过，补全后才能用于岗位匹配和定制简历。",
+                related_jd_requirement=label,
+            )
+        )
+    for item in getattr(quality, "missing_result_items", [])[:2]:
+        label = f"缺结果：{item[:60]}"
+        questions.append(
+            QuestionItem(
+                question=(
+                    f"这条经历写了行动，但缺少结果：「{item}」。"
+                    "请补充最终交付、上线、排名、用户反馈、影响范围、效率变化或你能确认的结果；没有结果可以回答“没有”。"
+                ),
+                why_needed="结果是 STAR/PAR 评估中的 R，没有结果会降低简历说服力。",
+                related_jd_requirement=label,
+            )
+        )
+    for item in getattr(quality, "missing_metric_items", [])[:2]:
+        label = f"缺量化：{item[:60]}"
+        questions.append(
+            QuestionItem(
+                question=(
+                    f"这条经历缺少可确认数字或规模：「{item}」。"
+                    "是否有可确认的数据，例如数量、周期、版本次数、参与人数、用户反馈数量、效率提升或影响范围？没有数字请回答“没有”，不要编造。"
+                ),
+                why_needed="可确认数字能提升可信度；没有数字时系统会保留事实，不会编造。",
+                related_jd_requirement=label,
+            )
+        )
+    return questions
 
 
 def _questions_for_display(gap):
@@ -1344,6 +1398,20 @@ def _is_generic_project_question(text: str) -> bool:
 
 def _is_metric_question(text: str) -> bool:
     return any(term in text for term in ["可确认数据", "用户数", "效率提升", "准确率", "处理规模"])
+
+
+def _is_resume_quality_question(requirement: str) -> bool:
+    return requirement.startswith(("空壳经历：", "缺结果：", "缺量化："))
+
+
+def _resume_quality_requirement_answered(requirement: str, answered_requirements: set[str]) -> bool:
+    target = requirement.strip().lower()
+    target_kind = target.split("：", 1)[0] if "：" in target else target
+    return any(
+        item == target
+        or (item.startswith(target_kind) and (target in item or item in target))
+        for item in answered_requirements
+    )
 
 
 def _combined_memory_context() -> str:
