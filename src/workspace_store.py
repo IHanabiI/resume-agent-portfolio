@@ -19,6 +19,8 @@ class WorkspaceSnapshot(BaseModel):
     workspace_id: str = ""
     updated_at: str = ""
     resume_text: str = ""
+    resume_template_docx_name: str = ""
+    resume_template_docx_bytes_b64: str = ""
     job_description: str = ""
     memory_text: str = ""
     github_input: str = ""

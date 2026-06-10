@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 import sys
@@ -21,7 +22,7 @@ st.set_page_config(page_title="简历定制 Agent", layout="wide")
 
 def load_app_modules():
     from src.config import OUTPUT_DIR, get_settings
-    from src.exporter.docx_exporter import markdown_to_docx_bytes, save_docx
+    from src.exporter.docx_exporter import markdown_to_docx_bytes, markdown_to_template_docx_bytes, save_docx
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
@@ -98,6 +99,7 @@ def load_app_modules():
         "OUTPUT_DIR": OUTPUT_DIR,
         "get_settings": get_settings,
         "markdown_to_docx_bytes": markdown_to_docx_bytes,
+        "markdown_to_template_docx_bytes": markdown_to_template_docx_bytes,
         "save_docx": save_docx,
         "build_full_markdown": build_full_markdown,
         "save_markdown": save_markdown,
@@ -162,6 +164,8 @@ def init_state() -> None:
         "workspace_loaded": False,
         "workspace_updated_at": "",
         "workspace_upload_done": False,
+        "resume_template_docx_name": "",
+        "resume_template_docx_bytes_b64": "",
         "editable_resume_markdown": "",
     }
     for key, value in defaults.items():
@@ -491,8 +495,16 @@ def render_input_section(modules) -> None:
 
     if uploaded:
         try:
-            st.session_state.resume_text = modules["extract_text_from_upload"](uploaded.name, uploaded.getvalue())
+            uploaded_data = uploaded.getvalue()
+            st.session_state.resume_text = modules["extract_text_from_upload"](uploaded.name, uploaded_data)
+            if Path(uploaded.name).suffix.lower() == ".docx":
+                _store_resume_template_docx(uploaded.name, uploaded_data)
+            else:
+                st.session_state.resume_template_docx_name = ""
+                st.session_state.resume_template_docx_bytes_b64 = ""
             st.success(f"已读取文件：{uploaded.name}")
+            if st.session_state.resume_template_docx_name:
+                st.caption(f"已保存原始 DOCX 模板：{st.session_state.resume_template_docx_name}。最终可下载尽量保留模板和照片的 DOCX。")
         except Exception as exc:
             st.error(f"文件解析失败：{exc}")
     elif pasted_resume.strip():
@@ -864,6 +876,21 @@ def _processed_answers(answers):
     return [answer for answer in answers if answer.answer.strip()]
 
 
+def _store_resume_template_docx(file_name: str, data: bytes) -> None:
+    st.session_state.resume_template_docx_name = file_name
+    st.session_state.resume_template_docx_bytes_b64 = base64.b64encode(data).decode("ascii")
+
+
+def _get_resume_template_docx_bytes() -> bytes:
+    encoded = st.session_state.get("resume_template_docx_bytes_b64", "")
+    if not encoded:
+        return b""
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return b""
+
+
 def _extract_placeholders(text: str) -> list[str]:
     matches = re.findall(r"\[(请填写|需用户确认)[:：]([^\]]+)\]", text or "")
     return [f"{kind}：{content.strip()}" for kind, content in matches if content.strip()]
@@ -878,6 +905,8 @@ def _build_workspace_snapshot(modules):
         workspace_id=st.session_state.get("workspace_id", ""),
         updated_at=st.session_state.get("workspace_updated_at", ""),
         resume_text=st.session_state.resume_text,
+        resume_template_docx_name=st.session_state.resume_template_docx_name,
+        resume_template_docx_bytes_b64=st.session_state.resume_template_docx_bytes_b64,
         job_description=st.session_state.job_description,
         memory_text=st.session_state.memory_text,
         github_input=st.session_state.github_input,
@@ -913,6 +942,8 @@ def _apply_workspace_snapshot(modules, snapshot) -> None:
     st.session_state.workspace_id = snapshot.workspace_id
     st.session_state.workspace_updated_at = snapshot.updated_at
     st.session_state.resume_text = snapshot.resume_text
+    st.session_state.resume_template_docx_name = snapshot.resume_template_docx_name
+    st.session_state.resume_template_docx_bytes_b64 = snapshot.resume_template_docx_bytes_b64
     st.session_state.job_description = snapshot.job_description
     st.session_state.memory_text = snapshot.memory_text
     st.session_state.github_input = snapshot.github_input
@@ -1505,7 +1536,25 @@ def render_generation_section(modules) -> None:
         )
         with st.expander("预览可投递简历", expanded=True):
             st.markdown(st.session_state.editable_resume_markdown or "暂无简历内容。")
-        col_md, col_docx = st.columns(2)
+
+        template_upload = st.file_uploader(
+            "上传原始 DOCX 模板用于模板版导出",
+            type=["docx"],
+            key="resume_template_docx_uploader",
+            help="如果原始简历是 DOCX，系统会尽量沿用它的样式、表格和照片，再写入微调后的简历正文。",
+        )
+        if template_upload:
+            _store_resume_template_docx(template_upload.name, template_upload.getvalue())
+            _auto_save_workspace(modules, modules["get_settings"]())
+            st.success(f"已保存 DOCX 模板：{template_upload.name}")
+
+        template_bytes = _get_resume_template_docx_bytes()
+        if template_bytes:
+            st.caption(f"模板版 DOCX 将基于 `{st.session_state.resume_template_docx_name}` 生成，尽量保留原模板、照片、页眉页脚和表格结构。")
+        else:
+            st.caption("普通 DOCX 是重新排版版本，不会保留原始模板和照片；如需保留，请上传原始 DOCX 模板。")
+
+        col_md, col_docx, col_template_docx = st.columns(3)
         with col_md:
             st.download_button(
                 "下载可投递简历 Markdown",
@@ -1515,11 +1564,24 @@ def render_generation_section(modules) -> None:
             )
         with col_docx:
             st.download_button(
-                "下载可投递简历 DOCX",
+                "下载普通 DOCX",
                 data=modules["markdown_to_docx_bytes"](st.session_state.editable_resume_markdown or ""),
                 file_name="tailored_resume.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
+        with col_template_docx:
+            if template_bytes:
+                st.download_button(
+                    "下载模板版 DOCX",
+                    data=modules["markdown_to_template_docx_bytes"](
+                        st.session_state.editable_resume_markdown or "",
+                        template_bytes,
+                    ),
+                    file_name="tailored_resume_template.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            else:
+                st.button("下载模板版 DOCX", disabled=True, help="请先上传原始 DOCX 模板。")
         if st.button("保存微调到当前岗位", key="save_edited_resume"):
             _save_edited_resume_package(modules, tailored, fact_check)
             st.success("已保存微调后的简历正文。")
