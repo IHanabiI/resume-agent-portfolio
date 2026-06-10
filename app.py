@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import sys
@@ -147,6 +148,7 @@ def init_state() -> None:
         "answers": [],
         "cumulative_answers": [],
         "question_round": 1,
+        "question_answer_drafts": {},
         "memory_text": "",
         "github_input": "",
         "github_context": "",
@@ -537,14 +539,12 @@ def render_input_section(modules) -> None:
                 st.session_state.analysis_state = modules["run_analysis"](
                     st.session_state.resume_text,
                     st.session_state.job_description,
-                    st.session_state.memory_text,
+                    _combined_memory_context(),
                     st.session_state.github_context,
+                    st.session_state.cumulative_answers,
                 )
                 st.session_state.generation_state = None
                 st.session_state.answers = []
-                st.session_state.cumulative_answers = []
-                st.session_state.question_round = 1
-                st.session_state.session_context_text = ""
                 fit = st.session_state.analysis_state.get("job_fit_report")
                 st.session_state.job_workspace = modules["update_job_status"](
                     st.session_state.job_workspace,
@@ -731,14 +731,19 @@ def render_questions(modules, gap, quality=None) -> None:
                 st.write(item.answer)
 
     for index, question in enumerate(questions[:5], start=1):
+        draft_key = _question_identity(question)
+        widget_key = f"answer_{draft_key}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = st.session_state.question_answer_drafts.get(draft_key, "")
         st.markdown(f"**问题 {index}：{question.question}**")
         st.caption(f"用途：{question.why_needed}；关联 JD 要求：{question.related_jd_requirement}")
         answer = st.text_area(
             f"回答 {index}",
-            key=f"answer_{st.session_state.question_round}_{index}",
+            key=widget_key,
             placeholder="请填写真实经历；也可以回答：没有 / 不清楚 / 跳过",
             height=100,
         )
+        _remember_question_draft(modules, draft_key, answer)
         answers.append(
             UserAnswer(
                 question=question.question,
@@ -769,7 +774,10 @@ def render_questions(modules, gap, quality=None) -> None:
             processed_answers = _processed_answers(answers)
             factual_answers = _accepted_answers(answers)
             if processed_answers:
-                st.session_state.cumulative_answers.extend(processed_answers)
+                st.session_state.cumulative_answers = _merge_user_answers(
+                    st.session_state.cumulative_answers,
+                    processed_answers,
+                )
             if factual_answers:
                 st.session_state.session_context_text = _merge_answers_into_memory(
                     st.session_state.session_context_text,
@@ -782,6 +790,7 @@ def render_questions(modules, gap, quality=None) -> None:
                     selected_memory_candidates,
                     st.session_state.question_round,
                 )
+            _persist_question_progress_to_active_job(modules, autosave=False)
             all_answers = st.session_state.cumulative_answers
             state = dict(st.session_state.analysis_state)
             state["user_answers"] = all_answers
@@ -839,7 +848,10 @@ def render_questions(modules, gap, quality=None) -> None:
             if not processed_answers:
                 st.warning("请至少填写一个回答；可以填写真实经历，也可以回答“没有 / 不清楚 / 跳过”。")
                 return
-            st.session_state.cumulative_answers.extend(processed_answers)
+            st.session_state.cumulative_answers = _merge_user_answers(
+                st.session_state.cumulative_answers,
+                processed_answers,
+            )
             if factual_answers:
                 st.session_state.session_context_text = _merge_answers_into_memory(
                     st.session_state.session_context_text,
@@ -852,6 +864,7 @@ def render_questions(modules, gap, quality=None) -> None:
                 selected_memory_candidates,
                 st.session_state.question_round,
             )
+            _persist_question_progress_to_active_job(modules, autosave=False)
             with st.spinner("正在根据补充信息重新评估岗位匹配..."):
                 st.session_state.analysis_state = modules["run_analysis"](
                     st.session_state.resume_text,
@@ -862,9 +875,73 @@ def render_questions(modules, gap, quality=None) -> None:
                 )
                 st.session_state.question_round += 1
                 st.session_state.generation_state = None
+                _persist_question_progress_to_active_job(modules, autosave=False)
                 _auto_save_workspace(modules, modules["get_settings"]())
             st.success("已更新记忆并刷新岗位评估。")
             st.rerun()
+
+
+def _question_identity(question) -> str:
+    raw = f"{question.related_jd_requirement.strip()}::{question.question.strip()}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _remember_question_draft(modules, draft_key: str, answer: str) -> None:
+    drafts = dict(st.session_state.get("question_answer_drafts", {}))
+    previous = drafts.get(draft_key, "")
+    if previous == answer:
+        return
+    if answer:
+        drafts[draft_key] = answer
+    else:
+        drafts.pop(draft_key, None)
+    st.session_state.question_answer_drafts = drafts
+    _persist_question_progress_to_active_job(modules)
+
+
+def _merge_user_answers(existing, new_answers):
+    UserAnswer = type(new_answers[0]) if new_answers else None
+    merged = []
+    by_key = {}
+    for answer in list(existing) + list(new_answers):
+        answer_text = _answer_field(answer, "answer")
+        if not answer_text.strip():
+            continue
+        key = _answer_identity(answer)
+        by_key[key] = answer
+    for answer in by_key.values():
+        if UserAnswer and not isinstance(answer, UserAnswer):
+            merged.append(UserAnswer.model_validate(answer))
+        else:
+            merged.append(answer)
+    return merged
+
+
+def _answer_identity(answer) -> str:
+    raw = f"{_answer_field(answer, 'related_jd_requirement').strip().lower()}::{_question_key(_answer_field(answer, 'question'))}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _answer_field(answer, field: str) -> str:
+    if isinstance(answer, dict):
+        return str(answer.get(field, ""))
+    return str(getattr(answer, field, ""))
+
+
+def _persist_question_progress_to_active_job(modules, autosave: bool = True) -> None:
+    active_job_id = st.session_state.get("active_job_id", "")
+    if active_job_id and st.session_state.get("job_workspace"):
+        job = _find_job(st.session_state.job_workspace, active_job_id)
+        if job:
+            job.question_answers = [
+                item.model_dump() if hasattr(item, "model_dump") else item
+                for item in st.session_state.get("cumulative_answers", [])
+            ]
+            job.question_answer_drafts = dict(st.session_state.get("question_answer_drafts", {}))
+            job.question_round = max(1, int(st.session_state.get("question_round", 1) or 1))
+            job.session_context_text = st.session_state.get("session_context_text", "")
+    if autosave:
+        _auto_save_workspace(modules, modules["get_settings"]())
 
 
 def _accepted_answers(answers):
@@ -912,6 +989,7 @@ def _build_workspace_snapshot(modules):
         github_input=st.session_state.github_input,
         github_context=st.session_state.github_context,
         session_context_text=st.session_state.session_context_text,
+        question_answer_drafts=dict(st.session_state.question_answer_drafts),
         active_job_id=st.session_state.active_job_id,
         job_company=st.session_state.job_company,
         job_title=st.session_state.job_title,
@@ -949,6 +1027,7 @@ def _apply_workspace_snapshot(modules, snapshot) -> None:
     st.session_state.github_input = snapshot.github_input
     st.session_state.github_context = snapshot.github_context
     st.session_state.session_context_text = snapshot.session_context_text
+    st.session_state.question_answer_drafts = dict(snapshot.question_answer_drafts or {})
     st.session_state.active_job_id = snapshot.active_job_id
     st.session_state.job_company = snapshot.job_company
     st.session_state.job_title = snapshot.job_title
@@ -970,6 +1049,19 @@ def _apply_workspace_snapshot(modules, snapshot) -> None:
         }
     else:
         st.session_state.generation_state = None
+
+    active_job = _find_job(st.session_state.job_workspace, st.session_state.active_job_id)
+    if active_job and (
+        getattr(active_job, "question_answers", None)
+        or getattr(active_job, "question_answer_drafts", None)
+        or getattr(active_job, "session_context_text", None)
+    ):
+        st.session_state.cumulative_answers = [
+            UserAnswer.model_validate(item) for item in active_job.question_answers
+        ]
+        st.session_state.question_answer_drafts = dict(active_job.question_answer_drafts or {})
+        st.session_state.session_context_text = active_job.session_context_text or st.session_state.session_context_text
+        st.session_state.question_round = max(1, int(active_job.question_round or 1))
 
 
 def _auto_save_workspace(modules, settings):
@@ -1017,9 +1109,14 @@ def _load_job_into_session(job, modules=None) -> None:
     st.session_state.analysis_state = None
     st.session_state.generation_state = _job_package_to_generation_state(job, modules) if modules else None
     st.session_state.editable_resume_markdown = job.package_resume_markdown or ""
-    st.session_state.cumulative_answers = []
-    st.session_state.session_context_text = ""
-    st.session_state.question_round = 1
+    UserAnswer = modules["UserAnswer"] if modules else None
+    st.session_state.cumulative_answers = [
+        UserAnswer.model_validate(item) if UserAnswer else item
+        for item in getattr(job, "question_answers", [])
+    ]
+    st.session_state.question_answer_drafts = dict(getattr(job, "question_answer_drafts", {}) or {})
+    st.session_state.session_context_text = getattr(job, "session_context_text", "") or ""
+    st.session_state.question_round = max(1, int(getattr(job, "question_round", 1) or 1))
 
 
 def _job_package_to_generation_state(job, modules):
@@ -1057,6 +1154,7 @@ def _upsert_current_job(modules):
         return None
     JobPosting = modules["JobPosting"]
     title = st.session_state.job_title.strip() or modules["infer_job_title_from_jd"](st.session_state.job_description)
+    existing = _find_job(st.session_state.job_workspace, st.session_state.active_job_id)
     job = JobPosting(
         job_id=st.session_state.active_job_id,
         company=st.session_state.job_company.strip(),
@@ -1065,6 +1163,28 @@ def _upsert_current_job(modules):
         jd_text=st.session_state.job_description.strip(),
         status=st.session_state.job_status,
         notes=st.session_state.job_notes.strip(),
+        match_score=getattr(existing, "match_score", 0) if existing else 0,
+        fit_recommendation=getattr(existing, "fit_recommendation", "") if existing else "",
+        fit_risks=getattr(existing, "fit_risks", []) if existing else [],
+        fit_matched_points=getattr(existing, "fit_matched_points", []) if existing else [],
+        suggested_resume_angle=getattr(existing, "suggested_resume_angle", "") if existing else "",
+        last_resume_file=getattr(existing, "last_resume_file", "") if existing else "",
+        package_generated_at=getattr(existing, "package_generated_at", "") if existing else "",
+        package_resume_markdown=getattr(existing, "package_resume_markdown", "") if existing else "",
+        package_opener_markdown=getattr(existing, "package_opener_markdown", "") if existing else "",
+        package_changelog_markdown=getattr(existing, "package_changelog_markdown", "") if existing else "",
+        package_needs_confirmation=getattr(existing, "package_needs_confirmation", []) if existing else [],
+        package_placeholders=getattr(existing, "package_placeholders", []) if existing else [],
+        package_evidence_map=getattr(existing, "package_evidence_map", []) if existing else [],
+        question_answers=[
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in st.session_state.cumulative_answers
+        ] or (getattr(existing, "question_answers", []) if existing else []),
+        question_answer_drafts=dict(st.session_state.question_answer_drafts)
+        or (getattr(existing, "question_answer_drafts", {}) if existing else {}),
+        question_round=max(1, int(st.session_state.question_round or 1)),
+        session_context_text=st.session_state.session_context_text
+        or (getattr(existing, "session_context_text", "") if existing else ""),
     )
     st.session_state.job_workspace = modules["upsert_job"](st.session_state.job_workspace, job)
     st.session_state.active_job_id = job.job_id

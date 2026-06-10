@@ -26,6 +26,7 @@ class WorkspaceSnapshot(BaseModel):
     github_input: str = ""
     github_context: str = ""
     session_context_text: str = ""
+    question_answer_drafts: dict[str, str] = Field(default_factory=dict)
     active_job_id: str = ""
     job_company: str = ""
     job_title: str = ""

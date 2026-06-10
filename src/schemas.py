@@ -76,6 +76,10 @@ class JobPosting(BaseModel):
     package_needs_confirmation: list[str] = Field(default_factory=list)
     package_placeholders: list[str] = Field(default_factory=list)
     package_evidence_map: list[dict] = Field(default_factory=list)
+    question_answers: list[dict] = Field(default_factory=list)
+    question_answer_drafts: dict[str, str] = Field(default_factory=dict)
+    question_round: int = 1
+    session_context_text: str = ""
     created_at: str = ""
     updated_at: str = ""
 
