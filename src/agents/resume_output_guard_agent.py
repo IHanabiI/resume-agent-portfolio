@@ -258,11 +258,11 @@ def _markdown_section_signatures(markdown: str) -> list[dict[str, int | str]]:
 
 def _is_forbidden_title(title: str, original_titles: set[str]) -> bool:
     normalized = title.lower().replace(" ", "")
+    if _normalize_title(title) in original_titles:
+        return False
     hard_forbidden = any(term.lower().replace(" ", "") in normalized for term in HARD_FORBIDDEN_SECTION_TERMS)
     if hard_forbidden:
         return True
-    if _normalize_title(title) in original_titles:
-        return False
     return any(term.lower().replace(" ", "") in normalized for term in FORBIDDEN_SECTION_TERMS)
 
 
