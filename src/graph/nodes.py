@@ -9,6 +9,7 @@ from src.agents.question_agent import refine_questions
 from src.agents.resume_changelog_agent import build_diff_changelog
 from src.agents.resume_output_guard_agent import guard_final_resume
 from src.agents.resume_parser_agent import parse_resume
+from src.agents.resume_plan_audit_agent import audit_alignment_execution
 from src.agents.resume_plan_applier_agent import build_ordered_resume_draft
 from src.agents.resume_quality_agent import assess_resume_quality
 from src.agents.resume_structure_agent import parse_resume_structure
@@ -139,10 +140,16 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("resume_structure"),
     )
     checked.final_resume_markdown = guarded_resume
-    checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *guard_warnings]))[:30]
+    execution_warnings = audit_alignment_execution(
+        state["resume_text"],
+        guarded_resume,
+        state.get("alignment_plan"),
+    )
+    all_warnings = [*guard_warnings, *execution_warnings]
+    checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *all_warnings]))[:30]
     tailored.changelog_markdown = build_diff_changelog(
         state["resume_text"],
         guarded_resume,
-        guard_warnings,
+        all_warnings,
     )
     return {"fact_check": checked, "tailored_resume": tailored}

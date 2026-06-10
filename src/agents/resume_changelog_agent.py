@@ -39,7 +39,7 @@ def build_diff_changelog(
         )
 
     if structure_notes:
-        lines.extend(["", "## 结构与格式校验"])
+        lines.extend(["", "## 结构、格式与计划执行校验"])
         lines.extend(f"- {item}" for item in structure_notes[:12])
 
     if fill_items:
