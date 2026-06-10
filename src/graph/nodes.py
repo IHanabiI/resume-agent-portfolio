@@ -13,7 +13,7 @@ from src.agents.resume_plan_audit_agent import audit_alignment_execution
 from src.agents.resume_plan_applier_agent import build_ordered_resume_draft
 from src.agents.resume_quality_agent import assess_resume_quality
 from src.agents.resume_structure_agent import parse_resume_structure
-from src.agents.resume_writer_agent import write_resume
+from src.agents.resume_writer_agent import revise_resume_after_audit, write_resume
 from src.agents.sufficiency_agent import assess_information_sufficiency
 from src.graph.state import ResumeAgentState
 from src.llm_client import get_llm_client
@@ -126,6 +126,45 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
 def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
     llm = get_llm_client()
     tailored = state["tailored_resume"]
+    checked, guarded_resume, guard_warnings, execution_warnings = _check_guard_and_audit(state, tailored, llm)
+
+    if _should_retry_after_audit(execution_warnings) and llm.available:
+        revised = revise_resume_after_audit(
+            state["candidate_profile"],
+            state["job_analysis"],
+            state["gap_analysis"],
+            state["resume_text"],
+            state.get("user_answers", []),
+            tailored,
+            guarded_resume,
+            execution_warnings,
+            state.get("resume_star_profile"),
+            state.get("alignment_plan"),
+            state.get("resume_structure"),
+            state.get("ordered_resume_draft", ""),
+            state.get("memory_text", ""),
+            state.get("github_context", ""),
+            llm,
+        )
+        if revised.resume_markdown.strip() and revised.resume_markdown.strip() != tailored.resume_markdown.strip():
+            tailored = revised
+            checked, guarded_resume, guard_warnings, execution_warnings = _check_guard_and_audit(state, tailored, llm)
+
+    all_warnings = [*guard_warnings, *execution_warnings]
+    checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *all_warnings]))[:30]
+    tailored.changelog_markdown = build_diff_changelog(
+        state["resume_text"],
+        guarded_resume,
+        all_warnings,
+    )
+    return {"fact_check": checked, "tailored_resume": tailored}
+
+
+def _check_guard_and_audit(
+    state: ResumeAgentState,
+    tailored,
+    llm,
+):
     checked = fact_check_resume(
         tailored,
         state["resume_text"],
@@ -145,11 +184,13 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
         guarded_resume,
         state.get("alignment_plan"),
     )
-    all_warnings = [*guard_warnings, *execution_warnings]
-    checked.needs_confirmation = list(dict.fromkeys([*checked.needs_confirmation, *all_warnings]))[:30]
-    tailored.changelog_markdown = build_diff_changelog(
-        state["resume_text"],
-        guarded_resume,
-        all_warnings,
-    )
-    return {"fact_check": checked, "tailored_resume": tailored}
+    return checked, guarded_resume, guard_warnings, execution_warnings
+
+
+def _should_retry_after_audit(execution_warnings: list[str]) -> bool:
+    retry_markers = [
+        "最终简历没有产生可比较正文变化",
+        "高优先级计划未在真实 diff 中明显体现",
+        "计划未明显执行",
+    ]
+    return any(any(marker in warning for marker in retry_markers) for warning in execution_warnings)

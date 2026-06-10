@@ -49,6 +49,75 @@ def write_resume(
     )
     if not result:
         return _fallback_write(candidate, job, gap, user_answers, memory_text, github_context, alignment_plan)
+    return _complete_result(result, candidate, job, gap, github_context, alignment_plan)
+
+
+def revise_resume_after_audit(
+    candidate: CandidateProfile,
+    job: JobAnalysis,
+    gap: GapAnalysis,
+    resume_text: str,
+    user_answers: list[UserAnswer],
+    current_result: TailoredResumeResult,
+    current_final_resume: str,
+    audit_warnings: list[str],
+    resume_star_profile: ResumeStarProfile | None = None,
+    alignment_plan: ResumeAlignmentPlan | None = None,
+    resume_structure: ResumeStructure | None = None,
+    ordered_resume_draft: str = "",
+    memory_text: str = "",
+    github_context: str = "",
+    llm: LLMClient | None = None,
+) -> TailoredResumeResult:
+    if not audit_warnings:
+        return current_result
+    llm = llm or LLMClient()
+    prompt = load_prompt("resume_writer_prompt.md")
+    result = llm.generate_structured(
+        "你是简历二次修正 Agent。你必须修复执行审计指出的问题，但仍然禁止编造、禁止改动原简历骨架、禁止输出内部标记。",
+        (
+            f"{prompt}\n\n本次是二次修正，不是重新自由生成。"
+            f"\n必须优先处理这些执行审计问题：\n{pretty_json({'audit_warnings': audit_warnings})}"
+            f"\n\n当前已生成但仍需修正的简历正文：\n{current_final_resume}"
+            f"\n\n当前 TailoredResumeResult：\n{pretty_json(current_result)}"
+            f"\n\n候选人信息：\n{pretty_json(candidate)}\n\n岗位分析：\n{pretty_json(job)}"
+            f"\n\n缺口分析：\n{pretty_json(gap)}"
+            f"\n\n原简历结构骨架：\n{pretty_json(resume_structure)}"
+            f"\n\nSTAR 证据：\n{pretty_json(resume_star_profile)}"
+            f"\n\n岗位对齐改写计划：\n{pretty_json(alignment_plan)}"
+            f"\n\n程序预排草稿：\n{ordered_resume_draft}"
+            f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
+            f"\n\n原始简历全文：\n{resume_text}"
+            f"\n\n个人记忆库：\n{memory_text}"
+            f"\n\nGitHub 公开证据：\n{github_context}"
+            "\n\n修正要求："
+            "\n- 只修改 audit_warnings 指出的未执行项和必要的上下文表达。"
+            "\n- 如果某项计划没有事实支撑，不要硬写进简历；改为 still_missing_info 或占位符。"
+            "\n- 保留当前简历中已经正确的内容，不要大面积重写。"
+            "\n- resume_markdown 只能是可投递简历正文。"
+        ),
+        TailoredResumeResult,
+    )
+    if not result or not result.resume_markdown.strip():
+        return current_result
+    result.optimization_notes = list(
+        dict.fromkeys([*current_result.optimization_notes, *result.optimization_notes, "已根据执行审计进行一次二次修正。"])
+    )
+    if not result.opener_markdown:
+        result.opener_markdown = current_result.opener_markdown
+    if not result.changelog_markdown:
+        result.changelog_markdown = current_result.changelog_markdown
+    return _complete_result(result, candidate, job, gap, github_context, alignment_plan)
+
+
+def _complete_result(
+    result: TailoredResumeResult,
+    candidate: CandidateProfile,
+    job: JobAnalysis,
+    gap: GapAnalysis,
+    github_context: str,
+    alignment_plan: ResumeAlignmentPlan | None,
+) -> TailoredResumeResult:
     if not result.opener_markdown:
         result.opener_markdown = _build_opener(candidate, job, gap, github_context)
     if not result.changelog_markdown:
