@@ -151,6 +151,7 @@ def load_app_modules():
 def init_state() -> None:
     defaults = {
         "resume_text": "",
+        "resume_raw_text": "",
         "job_description": "",
         "analysis_state": None,
         "generation_state": None,
@@ -525,7 +526,8 @@ def render_input_section(modules) -> None:
     if uploaded:
         try:
             uploaded_data = uploaded.getvalue()
-            st.session_state.resume_text = modules["extract_text_from_upload"](uploaded.name, uploaded_data)
+            extracted_text = modules["extract_text_from_upload"](uploaded.name, uploaded_data)
+            _set_resume_text(extracted_text, keep_existing_raw=False)
             if Path(uploaded.name).suffix.lower() == ".docx":
                 _store_resume_template_docx(uploaded.name, uploaded_data)
             else:
@@ -537,10 +539,14 @@ def render_input_section(modules) -> None:
         except Exception as exc:
             st.error(f"文件解析失败：{exc}")
     elif pasted_resume.strip():
-        st.session_state.resume_text = pasted_resume.strip()
+        if pasted_resume.strip() != st.session_state.resume_text.strip():
+            _set_resume_text(pasted_resume.strip(), keep_existing_raw=False)
 
     if job_description.strip():
         st.session_state.job_description = job_description.strip()
+
+    if st.session_state.resume_text.strip():
+        _render_resume_input_tools(modules)
 
     st.caption("点击“开始分析”后，可在「当前岗位交付」查看岗位评估、补充信息和生成结果。")
 
@@ -985,6 +991,181 @@ def _processed_answers(answers):
     return [answer for answer in answers if answer.answer.strip()]
 
 
+def _set_resume_text(text: str, keep_existing_raw: bool = True) -> None:
+    cleaned = (text or "").strip()
+    st.session_state.resume_text = cleaned
+    if not keep_existing_raw or not st.session_state.get("resume_raw_text"):
+        st.session_state.resume_raw_text = cleaned
+
+
+def _render_resume_input_tools(modules) -> None:
+    report = _resume_format_report(st.session_state.resume_text)
+    with st.expander("简历输入检查", expanded=report["needs_cleanup"]):
+        st.write(report["summary"])
+        if report["issues"]:
+            for item in report["issues"]:
+                st.write(f"- {item}")
+        else:
+            st.success("当前简历文本结构看起来可用。")
+        st.caption("参考 job-hunt 的做法：先保存原文，再按用户选择整理格式。整理只处理断行、项目符号和常见章节标题，不改写任何事实。")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("只整理格式", key="normalize_resume_text"):
+                st.session_state.resume_text = _normalize_resume_format(st.session_state.resume_text)
+                _auto_save_workspace(modules, modules["get_settings"]())
+                st.success("已整理格式，原文已保留，可随时还原。")
+                st.rerun()
+        with col2:
+            raw_text = st.session_state.get("resume_raw_text", "")
+            if st.button("还原原文", key="restore_raw_resume", disabled=not bool(raw_text.strip())):
+                st.session_state.resume_text = raw_text.strip()
+                _auto_save_workspace(modules, modules["get_settings"]())
+                st.success("已还原为原始简历文本。")
+                st.rerun()
+        with col3:
+            st.download_button(
+                "下载原文备份",
+                data=(st.session_state.get("resume_raw_text") or st.session_state.resume_text).encode("utf-8"),
+                file_name="resume.raw.txt",
+                mime="text/plain",
+            )
+
+
+def _resume_format_report(text: str) -> dict:
+    lines = [line.strip() for line in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+    if not lines:
+        return {"needs_cleanup": False, "summary": "尚未提供简历文本。", "issues": []}
+
+    heading_count = sum(1 for line in lines if _looks_like_resume_heading(line))
+    bullet_count = sum(1 for line in lines if _looks_like_resume_bullet(line))
+    avg_len = sum(len(line) for line in lines) / max(1, len(lines))
+    isolated_streak = _max_isolated_line_streak(lines)
+    issues = []
+    if heading_count < 2:
+        issues.append("章节标题较少，可能是从 PDF/Word 复制后丢失了结构。")
+    if bullet_count < 2:
+        issues.append("列表项目较少，经历可能被压成了大段文本。")
+    if avg_len < 12:
+        issues.append("平均行长度偏短，可能存在一行一词或断行问题。")
+    if isolated_streak >= 5:
+        issues.append(f"检测到连续 {isolated_streak} 行短行，可能存在复制断行。")
+    return {
+        "needs_cleanup": bool(issues),
+        "summary": f"识别到 {len(lines)} 行文本，约 {heading_count} 个章节标题、{bullet_count} 个列表项，平均每行 {avg_len:.1f} 字。",
+        "issues": issues,
+    }
+
+
+def _normalize_resume_format(text: str) -> str:
+    normalized = (
+        (text or "")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\u200b", "")
+        .replace("\u00ad", "")
+    )
+    raw_lines = normalized.split("\n")
+    lines: list[str] = []
+    for raw in raw_lines:
+        line = raw.strip()
+        if not line:
+            lines.append("")
+            continue
+        line = _normalize_resume_bullet(line)
+        if _is_common_resume_section(line):
+            line = f"## {line.lstrip('#').strip()}"
+        if lines and _should_merge_resume_lines(lines[-1], line):
+            lines[-1] = f"{lines[-1].rstrip()} {line.strip()}"
+        else:
+            lines.append(line)
+    return _collapse_blank_lines(lines).strip()
+
+
+def _normalize_resume_bullet(line: str) -> str:
+    for marker in ["·", "●", "▪", "◦", "▶", "•"]:
+        if line.startswith(marker):
+            return "- " + line[1:].strip()
+    return line
+
+
+def _should_merge_resume_lines(previous: str, current: str) -> bool:
+    if not previous.strip() or not current.strip():
+        return False
+    if _looks_like_resume_heading(previous) or _looks_like_resume_heading(current):
+        return False
+    if _looks_like_resume_bullet(previous) and not _looks_like_resume_bullet(current):
+        return len(current.strip()) <= 30
+    if _looks_like_resume_bullet(current):
+        return False
+    if previous.rstrip().endswith(("。", "！", "？", ".", "!", "?", "：", ":")):
+        return False
+    return len(previous.strip()) <= 36 or len(current.strip()) <= 24
+
+
+def _collapse_blank_lines(lines: list[str]) -> str:
+    result: list[str] = []
+    blank = False
+    for line in lines:
+        if not line.strip():
+            if result and not blank:
+                result.append("")
+            blank = True
+            continue
+        result.append(line.rstrip())
+        blank = False
+    return "\n".join(result)
+
+
+def _looks_like_resume_heading(line: str) -> bool:
+    stripped = line.strip()
+    if stripped.startswith("#"):
+        return True
+    return _is_common_resume_section(stripped)
+
+
+def _looks_like_resume_bullet(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(("-", "*", "+", "•", "·", "●", "▪", "◦", "▶")) or bool(re.match(r"^\d+[.、)]", stripped))
+
+
+def _is_common_resume_section(line: str) -> bool:
+    stripped = line.strip(" #：:")
+    section_terms = [
+        "个人信息",
+        "基本信息",
+        "联系方式",
+        "个人优势",
+        "专业技能",
+        "核心能力",
+        "技能特长",
+        "工作经历",
+        "实习经历",
+        "项目经历",
+        "项目经验",
+        "教育背景",
+        "教育经历",
+        "自我评价",
+        "求职意向",
+        "证书",
+        "奖项",
+        "荣誉",
+    ]
+    return len(stripped) <= 12 and stripped in section_terms
+
+
+def _max_isolated_line_streak(lines: list[str]) -> int:
+    best = 0
+    current = 0
+    for line in lines:
+        if 1 <= len(line.strip()) <= 3:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
 def _store_resume_template_docx(file_name: str, data: bytes) -> None:
     st.session_state.resume_template_docx_name = file_name
     st.session_state.resume_template_docx_bytes_b64 = base64.b64encode(data).decode("ascii")
@@ -1031,6 +1212,7 @@ def _build_workspace_snapshot(modules):
         workspace_id=st.session_state.get("workspace_id", ""),
         updated_at=st.session_state.get("workspace_updated_at", ""),
         resume_text=st.session_state.resume_text,
+        resume_raw_text=st.session_state.get("resume_raw_text", ""),
         resume_template_docx_name=st.session_state.resume_template_docx_name,
         resume_template_docx_bytes_b64=st.session_state.resume_template_docx_bytes_b64,
         job_description=st.session_state.job_description,
@@ -1069,6 +1251,7 @@ def _apply_workspace_snapshot(modules, snapshot) -> None:
     st.session_state.workspace_id = snapshot.workspace_id
     st.session_state.workspace_updated_at = snapshot.updated_at
     st.session_state.resume_text = snapshot.resume_text
+    st.session_state.resume_raw_text = getattr(snapshot, "resume_raw_text", "") or snapshot.resume_text
     st.session_state.resume_template_docx_name = snapshot.resume_template_docx_name
     st.session_state.resume_template_docx_bytes_b64 = snapshot.resume_template_docx_bytes_b64
     st.session_state.job_description = snapshot.job_description
