@@ -7,6 +7,7 @@ from src.agents.job_fit_agent import assess_job_fit
 from src.agents.match_gap_agent import analyze_match_and_gap
 from src.agents.question_agent import refine_questions
 from src.agents.resume_parser_agent import parse_resume
+from src.agents.resume_plan_applier_agent import build_ordered_resume_draft
 from src.agents.resume_quality_agent import assess_resume_quality
 from src.agents.resume_structure_agent import parse_resume_structure
 from src.agents.resume_writer_agent import write_resume
@@ -92,6 +93,14 @@ def alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
     return {"alignment_plan": plan}
 
 
+def apply_alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
+    draft = build_ordered_resume_draft(
+        state.get("resume_structure"),
+        state.get("alignment_plan"),
+    )
+    return {"ordered_resume_draft": draft}
+
+
 def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
     llm = get_llm_client()
     result = write_resume(
@@ -103,6 +112,7 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("resume_star_profile"),
         state.get("alignment_plan"),
         state.get("resume_structure"),
+        state.get("ordered_resume_draft", ""),
         state.get("memory_text", ""),
         state.get("github_context", ""),
         llm,

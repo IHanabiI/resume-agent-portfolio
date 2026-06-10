@@ -24,6 +24,7 @@ def write_resume(
     resume_star_profile: ResumeStarProfile | None = None,
     alignment_plan: ResumeAlignmentPlan | None = None,
     resume_structure: ResumeStructure | None = None,
+    ordered_resume_draft: str = "",
     memory_text: str = "",
     github_context: str = "",
     llm: LLMClient | None = None,
@@ -38,6 +39,7 @@ def write_resume(
             f"\n\n原简历结构骨架：\n{pretty_json(resume_structure)}"
             f"\n\nSTAR 证据：\n{pretty_json(resume_star_profile)}"
             f"\n\n岗位对齐改写计划：\n{pretty_json(alignment_plan)}"
+            f"\n\n程序预排草稿（只做保守重排，未改写事实；最终简历应优先保留其结构）：\n{ordered_resume_draft}"
             f"\n\n用户补充回答：\n{pretty_json({'answers': [a.model_dump() for a in user_answers]})}"
             f"\n\n原始简历全文：\n{resume_text}"
             f"\n\n个人记忆库：\n{memory_text}"
