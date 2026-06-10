@@ -689,13 +689,15 @@ def render_analysis_section(modules) -> None:
 def render_questions(modules, gap) -> None:
     st.subheader("补充真实信息")
     st.caption("这里用于补全会影响简历质量的事实。可以填写后直接生成交付材料；不确定的内容可以跳过，系统会用占位符提示。")
-    if gap.soft_evidence_gaps:
+    soft_gaps_for_display = _unanswered_soft_gaps(gap)
+    hard_gaps_for_display = _unanswered_hard_gaps(gap)
+    if soft_gaps_for_display:
         st.markdown("**优先补充软性能力的可验证场景**")
-        for item in gap.soft_evidence_gaps[:4]:
+        for item in soft_gaps_for_display[:4]:
             st.write(f"- {item.requirement}：{item.evidence_needed}")
-    if gap.hard_skill_gaps:
+    if hard_gaps_for_display:
         st.markdown("**硬技能 / 方法待确认**")
-        st.write("、".join(gap.hard_skill_gaps[:8]))
+        st.write("、".join(hard_gaps_for_display[:8]))
     questions = _questions_for_display(gap)
     questions = _filter_repeated_questions(questions)
     if not questions:
@@ -745,12 +747,14 @@ def render_questions(modules, gap) -> None:
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("直接生成岗位交付材料", type="primary"):
-            current_answers = _accepted_answers(answers)
-            if current_answers:
-                st.session_state.cumulative_answers.extend(current_answers)
+            processed_answers = _processed_answers(answers)
+            factual_answers = _accepted_answers(answers)
+            if processed_answers:
+                st.session_state.cumulative_answers.extend(processed_answers)
+            if factual_answers:
                 st.session_state.session_context_text = _merge_answers_into_memory(
                     st.session_state.session_context_text,
-                    current_answers,
+                    factual_answers,
                     st.session_state.question_round,
                 )
                 st.session_state.memory_candidates.extend(selected_memory_candidates)
@@ -810,16 +814,18 @@ def render_questions(modules, gap) -> None:
 
     with col2:
         if st.button("保存补充并重新评估", type="secondary"):
-            accepted_answers = _accepted_answers(answers)
-            if not accepted_answers:
-                st.warning("请至少填写一个有效回答；如果都没有，可以直接生成岗位交付材料。")
+            processed_answers = _processed_answers(answers)
+            factual_answers = _accepted_answers(answers)
+            if not processed_answers:
+                st.warning("请至少填写一个回答；可以填写真实经历，也可以回答“没有 / 不清楚 / 跳过”。")
                 return
-            st.session_state.cumulative_answers.extend(accepted_answers)
-            st.session_state.session_context_text = _merge_answers_into_memory(
-                st.session_state.session_context_text,
-                accepted_answers,
-                st.session_state.question_round,
-            )
+            st.session_state.cumulative_answers.extend(processed_answers)
+            if factual_answers:
+                st.session_state.session_context_text = _merge_answers_into_memory(
+                    st.session_state.session_context_text,
+                    factual_answers,
+                    st.session_state.question_round,
+                )
             st.session_state.memory_candidates.extend(selected_memory_candidates)
             st.session_state.memory_text = _merge_memory_candidates_into_text(
                 st.session_state.memory_text,
@@ -844,6 +850,10 @@ def render_questions(modules, gap) -> None:
 def _accepted_answers(answers):
     skipped = {"", "没有", "不清楚", "跳过", "none", "not sure", "skip"}
     return [answer for answer in answers if answer.answer.strip().lower() not in skipped]
+
+
+def _processed_answers(answers):
+    return [answer for answer in answers if answer.answer.strip()]
 
 
 def _extract_placeholders(text: str) -> list[str]:
@@ -1173,6 +1183,7 @@ def _filter_repeated_questions(questions):
         for answer in st.session_state.cumulative_answers
         if answer.answer.strip() and answer.related_jd_requirement.strip()
     }
+    answered_requirement_tokens = _requirement_tokens(answered_requirements)
     filtered = []
     seen_current = set()
     for question in questions:
@@ -1181,6 +1192,8 @@ def _filter_repeated_questions(questions):
         if key in asked_keys or key in seen_current:
             continue
         if requirement and requirement in answered_requirements:
+            continue
+        if requirement and _requirement_already_answered(requirement, answered_requirements, answered_requirement_tokens):
             continue
         if _is_generic_project_question(question.question) and _answered_requirement(answered_requirements, "隐藏经历挖掘"):
             continue
@@ -1195,10 +1208,10 @@ def _questions_for_display(gap):
     questions = []
     seen_soft_groups = set()
     seen_questions = set()
-    hard_requirements = filter_actionable_hard_requirements(list(getattr(gap, "hard_skill_gaps", []) or []))
+    hard_requirements = filter_actionable_hard_requirements(_unanswered_hard_gaps(gap))
     deferred_questions = []
 
-    for item in getattr(gap, "soft_evidence_gaps", []) or []:
+    for item in _unanswered_soft_gaps(gap):
         group_name = item.requirement.strip()
         question_text = item.suggested_question.strip()
         if not group_name or not question_text:
@@ -1259,6 +1272,33 @@ def _questions_for_display(gap):
     return questions
 
 
+def _answered_requirement_state():
+    answered_requirements = {
+        answer.related_jd_requirement.strip().lower()
+        for answer in st.session_state.cumulative_answers
+        if answer.answer.strip() and answer.related_jd_requirement.strip()
+    }
+    return answered_requirements, _requirement_tokens(answered_requirements)
+
+
+def _unanswered_hard_gaps(gap):
+    answered_requirements, answered_tokens = _answered_requirement_state()
+    result = []
+    for item in getattr(gap, "hard_skill_gaps", []) or []:
+        if not _requirement_already_answered(item, answered_requirements, answered_tokens):
+            result.append(item)
+    return result
+
+
+def _unanswered_soft_gaps(gap):
+    answered_requirements, answered_tokens = _answered_requirement_state()
+    result = []
+    for item in getattr(gap, "soft_evidence_gaps", []) or []:
+        if not _requirement_already_answered(item.requirement, answered_requirements, answered_tokens):
+            result.append(item)
+    return result
+
+
 def _is_legacy_keyword_question(text: str) -> bool:
     return text.strip().startswith("JD 提到") and "你是否有真实使用或相关项目经历" in text
 
@@ -1274,6 +1314,28 @@ def _question_key(text: str) -> str:
 def _answered_requirement(answered_requirements: set[str], requirement: str) -> bool:
     target = requirement.lower()
     return any(target == item or target in item or item in target for item in answered_requirements)
+
+
+def _requirement_tokens(requirements: set[str]) -> set[str]:
+    tokens: set[str] = set()
+    for requirement in requirements:
+        for token in re.split(r"[、,，/｜|;；\s]+", requirement):
+            cleaned = token.strip().lower()
+            if len(cleaned) >= 2:
+                tokens.add(cleaned)
+    return tokens
+
+
+def _requirement_already_answered(requirement: str, answered_requirements: set[str], answered_tokens: set[str]) -> bool:
+    if _answered_requirement(answered_requirements, requirement):
+        return True
+    tokens = _requirement_tokens({requirement})
+    if not tokens:
+        return False
+    if tokens & answered_tokens:
+        return True
+    joined_answered = "\n".join(answered_requirements)
+    return any(token in joined_answered for token in tokens)
 
 
 def _is_generic_project_question(text: str) -> bool:

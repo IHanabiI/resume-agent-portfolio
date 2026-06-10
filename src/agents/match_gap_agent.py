@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from src.config import load_prompt
 from src.llm_client import LLMClient, pretty_json
 from src.requirement_classifier import (
@@ -26,7 +28,7 @@ def analyze_match_and_gap(
     llm = llm or LLMClient()
     context = _build_context(resume_text, memory_text, github_context, user_answers or [])
     if llm.settings.fast_analysis_mode:
-        return _fallback_gap(candidate, job, context)
+        return _prune_answered_gap(_fallback_gap(candidate, job, context), user_answers or [])
     prompt = load_prompt("match_gap_prompt.md")
     result = llm.generate_structured(
         "你是匹配与缺口分析 Agent。不得把 JD 要求当成候选人已经具备的事实；只把原始简历、个人记忆库、GitHub 公开证据、用户回答中有来源的信息视为事实。",
@@ -36,7 +38,7 @@ def analyze_match_and_gap(
         ),
         GapAnalysis,
     )
-    return _normalize_gap(result or _fallback_gap(candidate, job, context), candidate, job, context)
+    return _prune_answered_gap(_normalize_gap(result or _fallback_gap(candidate, job, context), candidate, job, context), user_answers or [])
 
 
 def _build_context(
@@ -162,6 +164,44 @@ def _normalize_gap(gap: GapAnalysis, candidate: CandidateProfile, job: JobAnalys
     )
 
 
+def _prune_answered_gap(gap: GapAnalysis, user_answers: list[UserAnswer]) -> GapAnalysis:
+    answered_requirements = {
+        answer.related_jd_requirement.strip().lower()
+        for answer in user_answers
+        if answer.answer.strip() and answer.related_jd_requirement.strip()
+    }
+    if not answered_requirements:
+        return gap
+    answered_tokens = _requirement_tokens(answered_requirements)
+    hard_gaps = [
+        item
+        for item in gap.hard_skill_gaps
+        if not _requirement_already_answered(item, answered_requirements, answered_tokens)
+    ]
+    soft_gaps = [
+        item
+        for item in gap.soft_evidence_gaps
+        if not _requirement_already_answered(item.requirement, answered_requirements, answered_tokens)
+    ]
+    questions = [
+        item
+        for item in gap.questions_to_user
+        if not _requirement_already_answered(item.related_jd_requirement, answered_requirements, answered_tokens)
+    ]
+    missing = [
+        item
+        for item in gap.missing_information
+        if not _missing_item_answered(item, answered_requirements, answered_tokens)
+    ]
+    return GapAnalysis(
+        matched_strengths=gap.matched_strengths,
+        missing_information=missing,
+        hard_skill_gaps=hard_gaps,
+        soft_evidence_gaps=soft_gaps,
+        questions_to_user=questions,
+    )
+
+
 def _job_text(job: JobAnalysis) -> str:
     return "\n".join(
         [
@@ -263,3 +303,33 @@ def _looks_like_legacy_generic_soft_question(text: str) -> bool:
 
 def _looks_like_legacy_keyword_question(text: str) -> bool:
     return text.startswith("JD 提到") and "你是否有真实使用或相关项目经历" in text
+
+
+def _requirement_tokens(requirements: set[str]) -> set[str]:
+    tokens: set[str] = set()
+    for requirement in requirements:
+        for token in re.split(r"[、,，/｜|;；\s]+", requirement):
+            cleaned = token.strip().lower()
+            if len(cleaned) >= 2:
+                tokens.add(cleaned)
+    return tokens
+
+
+def _requirement_already_answered(requirement: str, answered_requirements: set[str], answered_tokens: set[str]) -> bool:
+    target = requirement.strip().lower()
+    if not target:
+        return False
+    if any(target == item or target in item or item in target for item in answered_requirements):
+        return True
+    tokens = _requirement_tokens({target})
+    if not tokens:
+        return False
+    if tokens & answered_tokens:
+        return True
+    joined_answered = "\n".join(answered_requirements)
+    return any(token in joined_answered for token in tokens)
+
+
+def _missing_item_answered(text: str, answered_requirements: set[str], answered_tokens: set[str]) -> bool:
+    lowered = text.lower()
+    return any(item and item in lowered for item in answered_requirements) or any(token in lowered for token in answered_tokens)
