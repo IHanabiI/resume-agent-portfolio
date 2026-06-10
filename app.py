@@ -174,6 +174,8 @@ def init_state() -> None:
         "session_context_text": "",
         "job_workspace": None,
         "job_import_report": None,
+        "batch_generation_notice": "",
+        "batch_generation_failures": [],
         "active_job_id": "",
         "job_company": "",
         "job_title": "",
@@ -1543,9 +1545,135 @@ def _batch_analyze_jobs(modules) -> None:
     _auto_save_workspace(modules, modules["get_settings"]())
 
 
+def _batch_generate_jobs(modules) -> None:
+    if not st.session_state.resume_text.strip():
+        st.error("请先在「准备材料」上传或粘贴原始简历，再批量生成交付包。")
+        return
+
+    jobs = [
+        job
+        for job in modules["ranked_jobs"](st.session_state.job_workspace)
+        if job.jd_text.strip() and not job.package_resume_markdown
+    ]
+    if not jobs:
+        st.info("没有需要批量生成的岗位。已有交付包的岗位不会被覆盖。")
+        return
+
+    original_active_job_id = st.session_state.active_job_id or st.session_state.job_workspace.active_job_id
+    progress = st.progress(0, text="准备批量生成交付包...")
+    success_count = 0
+    failures: list[str] = []
+
+    with st.spinner("正在批量生成岗位交付包。这个过程会逐个岗位调用模型，耗时取决于岗位数量..."):
+        for index, job in enumerate(jobs, start=1):
+            label = f"{job.company or '未填写公司'} - {job.title or '未命名岗位'}"
+            progress.progress(
+                int((index - 1) * 100 / len(jobs)),
+                text=f"正在生成：{label}",
+            )
+            try:
+                answers = _answers_for_job_generation(job, modules, original_active_job_id)
+                state = modules["run_analysis"](
+                    st.session_state.resume_text,
+                    job.jd_text,
+                    _combined_memory_context(),
+                    st.session_state.github_context,
+                    answers,
+                )
+                state["user_answers"] = answers
+                state["memory_text"] = _combined_memory_context()
+                state["github_context"] = st.session_state.github_context
+
+                generation_state = modules["run_generation"](state)
+                _save_generation_state_to_job(modules, job.job_id, state, generation_state, original_active_job_id)
+
+                if job.job_id == original_active_job_id:
+                    st.session_state.analysis_state = state
+                    st.session_state.generation_state = generation_state
+                    st.session_state.job_description = job.jd_text
+
+                success_count += 1
+            except Exception as exc:
+                failures.append(f"{label}：{exc}")
+
+        progress.progress(100, text="批量生成完成。")
+
+    st.session_state.job_workspace.active_job_id = original_active_job_id
+    st.session_state.active_job_id = original_active_job_id
+    if success_count:
+        st.session_state.batch_generation_notice = f"已完成 {success_count} 个岗位的交付包生成。"
+    else:
+        st.session_state.batch_generation_notice = "没有岗位成功生成交付包。"
+    st.session_state.batch_generation_failures = failures
+    _auto_save_workspace(modules, modules["get_settings"]())
+    st.rerun()
+
+
+def _answers_for_job_generation(job, modules, original_active_job_id: str):
+    UserAnswer = modules["UserAnswer"]
+    raw_answers = getattr(job, "question_answers", []) or []
+    answers = []
+    for item in raw_answers:
+        try:
+            answers.append(UserAnswer.model_validate(item))
+        except Exception:
+            continue
+    if job.job_id == original_active_job_id and st.session_state.cumulative_answers:
+        answers = _merge_user_answers(answers, st.session_state.cumulative_answers)
+    return answers
+
+
+def _save_generation_state_to_job(modules, job_id: str, analysis_state, generation_state, original_active_job_id: str = "") -> None:
+    tailored = generation_state["tailored_resume"]
+    fact_check = generation_state["fact_check"]
+    fit = analysis_state.get("job_fit_report") if analysis_state else None
+    package_resume = fact_check.final_resume_markdown or tailored.resume_markdown
+    placeholders = _extract_placeholders(
+        "\n\n".join(
+            [
+                package_resume,
+                tailored.opener_markdown,
+                tailored.changelog_markdown,
+            ]
+        )
+    )
+    st.session_state.job_workspace = modules["update_job_status"](
+        st.session_state.job_workspace,
+        job_id,
+        "已生成简历",
+        fit.score if fit else None,
+        "tailored_resume.docx",
+        fit_recommendation=fit.recommendation if fit else "",
+        fit_risks=fit.risks if fit else None,
+        fit_matched_points=fit.matched_points if fit else None,
+        suggested_resume_angle=fit.suggested_resume_angle if fit else "",
+    )
+    st.session_state.job_workspace = modules["update_job_package"](
+        st.session_state.job_workspace,
+        job_id,
+        package_resume,
+        tailored.opener_markdown,
+        tailored.changelog_markdown,
+        fact_check.needs_confirmation,
+        list(dict.fromkeys(placeholders + tailored.still_missing_info)),
+        [item.model_dump() if hasattr(item, "model_dump") else item for item in fact_check.evidence_map],
+        "tailored_resume.docx",
+    )
+    if job_id == original_active_job_id:
+        st.session_state.editable_resume_markdown = package_resume
+
+
 def render_shortlist_section(modules) -> None:
     st.header("Shortlist 总览")
     st.caption("参考 job-hunt 的求职工作区思路：把岗位按匹配度排序，用于决定优先分析和投递顺序。")
+    if st.session_state.get("batch_generation_notice"):
+        st.success(st.session_state.batch_generation_notice)
+        st.session_state.batch_generation_notice = ""
+    if st.session_state.get("batch_generation_failures"):
+        with st.expander("生成失败的岗位", expanded=True):
+            for item in st.session_state.batch_generation_failures:
+                st.write(f"- {item}")
+        st.session_state.batch_generation_failures = []
 
     workspace = st.session_state.job_workspace
     if not workspace.jobs:
@@ -1615,6 +1743,16 @@ def render_shortlist_section(modules) -> None:
             mime="text/html",
             help=f"包含 {len(ranked)} 个岗位，其中 {generated_count} 个已有定制简历。可离线打开、切换岗位、编辑简历并导出 PDF。",
         )
+
+    pending_generation = [job for job in ranked if job.jd_text.strip() and not job.package_resume_markdown]
+    st.caption(f"批量生成会处理尚未生成交付包的岗位：{len(pending_generation)} 个。已生成的岗位不会被覆盖。")
+    if st.button(
+        "批量生成未生成交付包",
+        type="secondary",
+        disabled=not bool(pending_generation),
+        help="逐个岗位运行分析和简历生成，失败项会在页面中列出，不会覆盖已有交付包。",
+    ):
+        _batch_generate_jobs(modules)
 
     selected = _find_job(workspace, st.session_state.get("shortlist_selected_job", ""))
     if selected:
