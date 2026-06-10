@@ -28,6 +28,7 @@ def load_app_modules():
     from src.exporter.html_resume_exporter import (
         build_editable_resume_html,
         build_job_delivery_html,
+        build_shortlist_delivery_html,
         extract_first_docx_image_data_uri,
     )
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
@@ -112,6 +113,7 @@ def load_app_modules():
         "markdown_to_template_docx_bytes": markdown_to_template_docx_bytes,
         "build_editable_resume_html": build_editable_resume_html,
         "build_job_delivery_html": build_job_delivery_html,
+        "build_shortlist_delivery_html": build_shortlist_delivery_html,
         "extract_first_docx_image_data_uri": extract_first_docx_image_data_uri,
         "save_docx": save_docx,
         "build_full_markdown": build_full_markdown,
@@ -1570,7 +1572,19 @@ def render_shortlist_section(modules) -> None:
     ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
-    col_load, col_export = st.columns([1, 1])
+    template_bytes = _get_resume_template_docx_bytes()
+    photo_data_uri = modules["extract_first_docx_image_data_uri"](template_bytes) if template_bytes else ""
+    shortlist_storage_key = _html_resume_storage_key(
+        "|".join(f"{job.job_id}:{job.updated_at}:{job.package_generated_at}" for job in ranked)
+    )
+    shortlist_html = modules["build_shortlist_delivery_html"](
+        jobs=ranked,
+        title="求职 Shortlist",
+        photo_data_uri=photo_data_uri,
+        storage_key=f"{shortlist_storage_key}:shortlist",
+    )
+
+    col_load, col_export_json, col_export_html = st.columns([1.2, 1, 1])
     with col_load:
         selected_id = st.selectbox(
             "从 Shortlist 加载岗位",
@@ -1585,12 +1599,21 @@ def render_shortlist_section(modules) -> None:
                 st.success("已加载岗位。")
                 st.rerun()
 
-    with col_export:
+    with col_export_json:
         st.download_button(
             "下载 shortlist.json",
             data=modules["shortlist_to_json_text"](workspace).encode("utf-8"),
             file_name="shortlist.json",
             mime="application/json",
+        )
+    with col_export_html:
+        generated_count = sum(1 for job in ranked if job.package_resume_markdown)
+        st.download_button(
+            "下载 shortlist.html",
+            data=shortlist_html.encode("utf-8"),
+            file_name="shortlist.html",
+            mime="text/html",
+            help=f"包含 {len(ranked)} 个岗位，其中 {generated_count} 个已有定制简历。可离线打开、切换岗位、编辑简历并导出 PDF。",
         )
 
     selected = _find_job(workspace, st.session_state.get("shortlist_selected_job", ""))
