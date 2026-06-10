@@ -10,8 +10,6 @@ SKIP_SECTION_TERMS = [
     "个人信息",
     "基本信息",
     "联系方式",
-    "教育",
-    "学历",
     "技能",
     "技术栈",
     "证书",
@@ -23,6 +21,9 @@ SKIP_SECTION_TERMS = [
 ]
 
 EXPERIENCE_SECTION_TERMS = ["经历", "项目", "实习", "工作", "创业", "实践"]
+WORKLIKE_SECTION_TERMS = ["工作", "实习", "项目", "创业", "实践", "兼职"]
+EDUCATION_SECTION_TERMS = ["教育", "学历", "学校", "专业", "本科", "硕士", "博士"]
+ORG_SUFFIXES = ("部", "组", "科", "岗", "中心", "团队", "部门", "事业部", "工作室", "小组")
 ACTION_TERMS = [
     "负责",
     "主导",
@@ -128,9 +129,9 @@ def assess_resume_quality(resume_text: str) -> tuple[ResumeQualityReport, Resume
         if len(cleaned) < 8:
             continue
 
-        has_action = _contains_any(cleaned, ACTION_TERMS)
-        has_result = _contains_any(cleaned, RESULT_TERMS) or bool(METRIC_PATTERN.search(cleaned))
-        has_metric = bool(METRIC_PATTERN.search(cleaned))
+        has_action = _contains_action(cleaned)
+        has_metric = _contains_metric(cleaned)
+        has_result = _contains_any(cleaned, RESULT_TERMS) or has_metric
         is_empty_shell = _looks_like_empty_shell(cleaned, has_action, has_result)
 
         if is_empty_shell:
@@ -231,11 +232,21 @@ def _clean_line(line: str) -> str:
 
 
 def _should_skip_section(section: str) -> bool:
+    if _looks_like_mixed_work_education_section(section):
+        return False
+    if any(term in section for term in EDUCATION_SECTION_TERMS):
+        return True
     return any(term in section for term in SKIP_SECTION_TERMS)
 
 
 def _looks_like_experience_section(section: str) -> bool:
     return any(term in section for term in EXPERIENCE_SECTION_TERMS)
+
+
+def _looks_like_mixed_work_education_section(section: str) -> bool:
+    return any(term in section for term in WORKLIKE_SECTION_TERMS) and any(
+        term in section for term in EDUCATION_SECTION_TERMS
+    )
 
 
 def _looks_like_bullet(line: str) -> bool:
@@ -248,13 +259,59 @@ def _contains_any(text: str, terms: list[str]) -> bool:
     return any(term.lower() in lower for term in terms)
 
 
+def _contains_metric(text: str) -> bool:
+    date_spans = [match.span() for match in DATE_PATTERN.finditer(text)]
+    for match in METRIC_PATTERN.finditer(text):
+        unit = match.group(3)
+        if not unit:
+            continue
+        if any(match.start() >= start and match.end() <= end for start, end in date_spans):
+            continue
+        return True
+    return False
+
+
+def _contains_action(text: str) -> bool:
+    lower = text.lower()
+    for term in ACTION_TERMS:
+        if re.fullmatch(r"[a-zA-Z]+", term):
+            if term.lower() in lower:
+                return True
+            continue
+        for match in re.finditer(re.escape(term), text):
+            if not _action_term_is_org_label(text, match.start(), match.end()):
+                return True
+    return False
+
+
+def _action_term_is_org_label(text: str, start: int, end: int) -> bool:
+    after = text[end : end + 4]
+    before = text[max(0, start - 4) : start]
+    if after.startswith(ORG_SUFFIXES):
+        return True
+    if before.endswith(ORG_SUFFIXES) and not after.startswith(("了", "并", "和", "与", "、")):
+        return True
+    return False
+
+
 def _looks_like_empty_shell(text: str, has_action: bool, has_result: bool) -> bool:
     if has_action or has_result:
         return False
     if DATE_PATTERN.search(text):
         return True
-    separators = ["|", "·", "，", ",", " "]
+    if _looks_like_org_title_line(text):
+        return True
+    separators = ["|", "·", "，", ",", " ", "-", "—", "－"]
     return 2 <= sum(1 for sep in separators if sep in text) and len(text) <= 80
+
+
+def _looks_like_org_title_line(text: str) -> bool:
+    if len(text) > 80:
+        return False
+    has_org_suffix = any(suffix in text for suffix in ORG_SUFFIXES)
+    has_header_separator = any(sep in text for sep in ["|", "·", "-", "—", "－", " "])
+    has_company_hint = any(term in text for term in ["公司", "大学", "学院", "工作室", "团队"])
+    return has_org_suffix and (has_header_separator or has_company_hint)
 
 
 def _build_star_item(section: str, text: str, has_action: bool, has_result: bool, needs_metrics: bool) -> ResumeStarItem:
