@@ -1676,6 +1676,7 @@ def render_shortlist_section(modules) -> None:
         st.session_state.batch_generation_failures = []
 
     workspace = st.session_state.job_workspace
+    _render_run_status_panel(workspace)
     if not workspace.jobs:
         st.info("岗位库为空。先导入 `.jobs.json` 或保存一个 JD 后，这里会显示排序榜单。")
         return
@@ -1776,6 +1777,112 @@ def render_shortlist_section(modules) -> None:
             if selected.notes:
                 st.subheader("备注")
                 st.write(selected.notes)
+
+
+def _render_run_status_panel(workspace) -> None:
+    jobs = list(getattr(workspace, "jobs", []) or [])
+    total_jobs = len(jobs)
+    jobs_with_jd = [job for job in jobs if getattr(job, "jd_text", "").strip()]
+    analyzed_jobs = [
+        job
+        for job in jobs_with_jd
+        if getattr(job, "match_score", 0) or getattr(job, "status", "") in ("已分析", "已生成简历")
+    ]
+    analyzed_job_ids = {getattr(job, "job_id", "") for job in analyzed_jobs}
+    generated_jobs = [job for job in jobs_with_jd if getattr(job, "package_resume_markdown", "").strip()]
+    pending_analysis = [job for job in jobs_with_jd if getattr(job, "job_id", "") not in analyzed_job_ids]
+    pending_generation = [job for job in jobs_with_jd if not getattr(job, "package_resume_markdown", "").strip()]
+    resume_loaded = bool(st.session_state.get("resume_text", "").strip())
+    current_jd_loaded = bool(st.session_state.get("job_description", "").strip())
+    memory_loaded = bool(st.session_state.get("memory_text", "").strip() or st.session_state.get("session_context_text", "").strip())
+    github_loaded = bool(st.session_state.get("github_context", "").strip())
+    generated_ratio = int(len(generated_jobs) * 100 / len(jobs_with_jd)) if jobs_with_jd else 0
+    next_action = _next_workflow_action(
+        resume_loaded=resume_loaded,
+        total_jobs=total_jobs,
+        jobs_with_jd=len(jobs_with_jd),
+        pending_analysis=len(pending_analysis),
+        pending_generation=len(pending_generation),
+        generated_jobs=len(generated_jobs),
+        current_jd_loaded=current_jd_loaded,
+    )
+
+    with st.expander("运行状态 / 断点续跑", expanded=True):
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("岗位总数", total_jobs)
+        metric_cols[1].metric("可分析 JD", len(jobs_with_jd))
+        metric_cols[2].metric("已分析", len(analyzed_jobs))
+        metric_cols[3].metric("已生成", len(generated_jobs))
+        metric_cols[4].metric("生成进度", f"{generated_ratio}%")
+        if jobs_with_jd:
+            st.progress(generated_ratio, text=f"交付包生成进度：{len(generated_jobs)} / {len(jobs_with_jd)}")
+
+        st.write(f"**建议下一步**：{next_action}")
+        if st.session_state.get("workspace_updated_at"):
+            st.caption(f"最近保存：{st.session_state.workspace_updated_at}")
+        else:
+            st.caption("当前工作区尚未显示保存时间；点击侧边栏「保存」可手动保存一次。")
+
+        stage_rows = [
+            {
+                "阶段": "1. 原始简历",
+                "状态": "已加载" if resume_loaded else "未加载",
+                "说明": "生成和批量分析都依赖原始简历。",
+            },
+            {
+                "阶段": "2. 个人记忆 / GitHub",
+                "状态": "已补充" if (memory_loaded or github_loaded) else "可选",
+                "说明": "用于补足简历之外的真实事实；没有也可以先跑。",
+            },
+            {
+                "阶段": "3. 岗位库",
+                "状态": f"已导入 {total_jobs} 个" if total_jobs else "为空",
+                "说明": "参考项目的 .jobs.json 入口在这里落地。",
+            },
+            {
+                "阶段": "4. 批量分析",
+                "状态": f"待分析 {len(pending_analysis)} 个" if pending_analysis else ("已完成" if jobs_with_jd else "等待 JD"),
+                "说明": "分析后会得到匹配度、风险和简历切入角度。",
+            },
+            {
+                "阶段": "5. 批量生成",
+                "状态": f"待生成 {len(pending_generation)} 个" if pending_generation else ("已完成" if jobs_with_jd else "等待 JD"),
+                "说明": "只生成缺失交付包，不覆盖已生成岗位。",
+            },
+            {
+                "阶段": "6. Shortlist 交付",
+                "状态": "可下载" if generated_jobs else "暂无可用简历",
+                "说明": "下载 shortlist.html 后可切换岗位、微调简历并导出 PDF。",
+            },
+        ]
+        st.dataframe(stage_rows, use_container_width=True, hide_index=True)
+
+
+def _next_workflow_action(
+    *,
+    resume_loaded: bool,
+    total_jobs: int,
+    jobs_with_jd: int,
+    pending_analysis: int,
+    pending_generation: int,
+    generated_jobs: int,
+    current_jd_loaded: bool,
+) -> str:
+    if not resume_loaded:
+        return "先在「准备材料」上传或粘贴原始简历。"
+    if total_jobs == 0:
+        if current_jd_loaded:
+            return "当前 JD 还没有进入岗位库，先点击「保存当前 JD 到岗位库」。"
+        return "导入 .jobs.json / 岗位库模板，或在「准备材料」粘贴一个目标 JD。"
+    if jobs_with_jd == 0:
+        return "岗位库已有记录，但缺少 JD 正文；请补充 JD 后再分析。"
+    if pending_analysis:
+        return "点击「批量分析岗位库」，先得到匹配度和岗位排序。"
+    if pending_generation:
+        return "点击「批量生成未生成交付包」，补齐每个岗位的简历、开场白和改动说明。"
+    if generated_jobs:
+        return "下载 shortlist.html，检查每个岗位的最终简历并导出 PDF。"
+    return "继续补充岗位 JD 或保存当前岗位。"
 
 
 def _short_job_label(jobs, job_id: str) -> str:
