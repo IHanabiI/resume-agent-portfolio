@@ -6,9 +6,67 @@ import re
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 BULLET_RE = re.compile(r"^(\s*)([-*+•‣▪]|\d+[.、])\s+(.+?)\s*$")
 
+SECTION_TITLES = (
+    "个人信息",
+    "基本信息",
+    "联系方式",
+    "教育背景",
+    "教育经历",
+    "专业技能",
+    "技能特长",
+    "核心能力",
+    "技术栈",
+    "项目经历",
+    "项目经验",
+    "项目实践",
+    "项目作品",
+    "工作经历",
+    "实习经历",
+    "自我评价",
+    "个人优势",
+    "求职意向",
+)
+
+SKILL_LABELS = (
+    "玩法与系统设计",
+    "游戏引擎与 Mod",
+    "游戏与 Mod",
+    "AI 辅助开发",
+    "编程基础",
+    "工具链与文档",
+    "技术栈",
+    "专业技能",
+)
+
+PROJECT_HEADER_HINTS = (
+    "HandsUp /",
+    "Black Table:",
+    "Black Table /",
+    "RepoDeltaForce -",
+    "RepoDeltaForce /",
+    "简历定制 Agent /",
+    "Resume Agent -",
+    "resume-agent-portfolio",
+)
+
+PROJECT_DETAIL_PREFIXES = (
+    "基于",
+    "围绕",
+    "处理",
+    "维护",
+    "独立设计",
+    "设计",
+    "以",
+    "实现",
+    "输出",
+    "接入",
+    "支持",
+)
+
 
 def normalize_resume_project_blocks(markdown_text: str) -> str:
     """Normalize resume bullets for skill sections and project blocks."""
+    markdown_text = _restore_collapsed_resume_structure(markdown_text or "")
     lines = []
     in_project_section = False
     project_section_level = 0
@@ -57,9 +115,8 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
             continue
 
         if in_project_section and skip_project_item:
-            if _looks_like_project_header_bullet(stripped):
-                bullet = BULLET_RE.match(stripped)
-                text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
+            if _looks_like_project_header_line(stripped):
+                text = _project_heading_from_line(stripped)
                 if _is_forbidden_project_title(text):
                     continue
                 lines.append(f"### {text}")
@@ -67,9 +124,8 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
                 skip_project_item = False
             continue
 
-        if in_project_section and _looks_like_project_header_bullet(stripped):
-            bullet = BULLET_RE.match(stripped)
-            text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
+        if in_project_section and _looks_like_project_header_line(stripped):
+            text = _project_heading_from_line(stripped)
             skip_project_item = _is_forbidden_project_title(text)
             if skip_project_item:
                 in_project_item = False
@@ -101,9 +157,58 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
                 lines.append(f"- {text}")
             continue
 
-        lines.append(line.rstrip())
+        lines.append(stripped)
 
     return _normalize_blank_lines(lines).strip()
+
+
+def _restore_collapsed_resume_structure(markdown_text: str) -> str:
+    text = (markdown_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+
+    nonempty_lines = [line for line in text.split("\n") if line.strip()]
+    heading_count = sum(1 for line in nonempty_lines if HEADING_RE.match(line.strip()))
+    long_line_count = sum(1 for line in nonempty_lines if len(line.strip()) > 180)
+    collapsed = heading_count < 2 and (len(nonempty_lines) <= 4 or long_line_count > 0)
+    if not collapsed:
+        return text
+
+    restored = re.sub(r"[ \t]+", " ", text)
+    restored = re.sub(r"\n+", "\n", restored)
+    restored = _insert_section_breaks(restored)
+    restored = _insert_skill_label_breaks(restored)
+    restored = _insert_project_breaks(restored)
+    restored = _insert_project_detail_breaks(restored)
+    return _normalize_blank_lines(restored.split("\n"))
+
+
+def _insert_section_breaks(text: str) -> str:
+    for title in sorted(SECTION_TITLES, key=len, reverse=True):
+        escaped = re.escape(title)
+        text = re.sub(rf"(^|\s)({escaped})(?=\s|[:：])", rf"\n## \2\n", text)
+    return text
+
+
+def _insert_skill_label_breaks(text: str) -> str:
+    for label in sorted(SKILL_LABELS, key=len, reverse=True):
+        escaped = re.escape(label)
+        text = re.sub(rf"(?<![#\n])\s+({escaped}[:：])", rf"\n\1", text)
+    return text
+
+
+def _insert_project_breaks(text: str) -> str:
+    for hint in sorted(PROJECT_HEADER_HINTS, key=len, reverse=True):
+        escaped = re.escape(hint)
+        text = re.sub(rf"(?<![#\n])\s+({escaped})", rf"\n\1", text)
+    return text
+
+
+def _insert_project_detail_breaks(text: str) -> str:
+    for prefix in PROJECT_DETAIL_PREFIXES:
+        escaped = re.escape(prefix)
+        text = re.sub(rf"(?<![#\n])\s+({escaped})", rf"\n\1", text)
+    return text
 
 
 def _normalize_bullet_marker(line: str) -> str:
@@ -167,6 +272,37 @@ def _looks_like_project_header_bullet(line: str) -> bool:
         return False
 
     return _has_project_header_signal(text, lead)
+
+
+def _looks_like_project_header_line(line: str) -> bool:
+    if _looks_like_project_header_bullet(line):
+        return True
+    if BULLET_RE.match(line):
+        return False
+    return _looks_like_project_header_text(line)
+
+
+def _looks_like_project_header_text(text: str) -> bool:
+    text = _clean_project_heading_text(text)
+    if not text or len(text) < 6 or len(text) > 180:
+        return False
+    if HEADING_RE.match(text) or _starts_with_detail_or_action(text):
+        return False
+
+    separator_index = _first_project_separator_index(text)
+    if separator_index == -1 or separator_index > 42:
+        return False
+
+    lead = text[:separator_index].strip(" -/|｜:：·")
+    if not lead or len(lead) > 32 or _is_detail_label(lead):
+        return False
+
+    return _has_project_header_signal(text, lead)
+
+
+def _project_heading_from_line(line: str) -> str:
+    bullet = BULLET_RE.match(line)
+    return _clean_project_heading_text(bullet.group(3) if bullet else line)
 
 
 def _looks_like_project_detail_bullet(line: str) -> bool:
