@@ -84,6 +84,7 @@ def guard_final_resume(
     original_titles = _original_titles(original_structure)
     lines = _remove_forbidden_sections(text.split("\n"), warnings, original_titles)
     lines = _clean_lines(lines, warnings)
+    lines = _promote_project_item_headings(lines, warnings)
     cleaned = _normalize_blank_lines(lines).strip()
 
     if original_structure:
@@ -179,6 +180,45 @@ def _normalize_blank_lines(lines: list[str]) -> str:
     return "\n".join(normalized)
 
 
+def _promote_project_item_headings(lines: list[str], warnings: list[str]) -> list[str]:
+    """Restore scan-friendly project blocks in project sections.
+
+    The reference job-hunt flow keeps project/company entries as block headers
+    and only places actions/results inside the block as bullets. Some models
+    flatten project headers into bullets, which makes the final resume hard to
+    scan. This pass only promotes likely project-header bullets inside project
+    sections; responsibility/result bullets stay unchanged.
+    """
+    promoted: list[str] = []
+    in_project_section = False
+    project_section_level = 0
+
+    for line in lines:
+        stripped = line.strip()
+        heading = HEADING_RE.match(stripped)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip()
+            if in_project_section and level <= project_section_level:
+                in_project_section = False
+                project_section_level = 0
+            if _is_project_section_title(title):
+                in_project_section = True
+                project_section_level = level
+            promoted.append(line)
+            continue
+
+        if in_project_section and _looks_like_project_header_bullet(stripped):
+            bullet = BULLET_RE.match(stripped)
+            text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
+            promoted.append(f"### {text}")
+            continue
+
+        promoted.append(line)
+
+    return promoted
+
+
 def _structure_warnings(cleaned: str, original_structure: ResumeStructure) -> list[str]:
     warnings: list[str] = []
     original_sections = _original_section_signatures(original_structure)
@@ -272,6 +312,127 @@ def _is_forbidden_title(title: str, original_titles: set[str]) -> bool:
     if hard_forbidden:
         return True
     return any(term.lower().replace(" ", "") in normalized for term in FORBIDDEN_SECTION_TERMS)
+
+
+def _is_project_section_title(title: str) -> bool:
+    normalized = title.lower().replace(" ", "")
+    return any(term in normalized for term in ("项目经历", "项目经验", "项目实践", "项目作品", "project"))
+
+
+def _looks_like_project_header_bullet(line: str) -> bool:
+    bullet = BULLET_RE.match(line)
+    if not bullet:
+        return False
+    text = _clean_project_heading_text(bullet.group(3))
+    if not text or len(text) < 6 or len(text) > 180:
+        return False
+    if HEADING_RE.match(text):
+        return False
+    if _starts_with_detail_or_action(text):
+        return False
+
+    separator_index = _first_project_separator_index(text)
+    if separator_index == -1 or separator_index > 36:
+        return False
+
+    lead = text[:separator_index].strip(" -/|｜:：·")
+    if not lead or len(lead) > 28 or _is_detail_label(lead):
+        return False
+
+    return _has_project_header_signal(text, lead)
+
+
+def _clean_project_heading_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^[-*+]\s+", "", cleaned).strip()
+    cleaned = re.sub(r"^\*\*(.+?)\*\*$", r"\1", cleaned).strip()
+    cleaned = cleaned.replace("**", "").strip()
+    return cleaned.rstrip("。；;")
+
+
+def _first_project_separator_index(text: str) -> int:
+    indexes = [text.find(sep) for sep in ("：", ":", " - ", " / ", " | ", "｜", " · ", " — ") if sep in text]
+    return min(indexes) if indexes else -1
+
+
+def _has_project_header_signal(text: str, lead: str) -> bool:
+    lowered = text.lower()
+    if re.search(r"[A-Za-z][A-Za-z0-9_-]{1,}", lead):
+        return True
+    if any(mark in text for mark in ("《", "》")):
+        return True
+    if any(term in lowered for term in ("github", "demo", "unity", "godot", "mod", "agent", "streamlit", "langgraph")):
+        return True
+    if any(term in text for term in ("项目", "系统", "平台", "工具", "小程序", "已发布", "已打包", "上线")):
+        return True
+    return len(lead) <= 12 and not _is_detail_label(lead)
+
+
+def _starts_with_detail_or_action(text: str) -> bool:
+    prefixes = (
+        "独立设计",
+        "设计",
+        "使用",
+        "围绕",
+        "完成",
+        "实现",
+        "搭建",
+        "负责",
+        "参与",
+        "主导",
+        "推动",
+        "输出",
+        "整理",
+        "分析",
+        "优化",
+        "通过",
+        "基于",
+        "接入",
+        "编写",
+        "维护",
+        "验证",
+        "测试",
+        "支持",
+        "协作",
+        "开发",
+        "项目定位",
+        "核心玩法",
+        "项目成果",
+        "主要成果",
+        "技术实现",
+        "规则实现",
+        "文档输出",
+        "玩法设计",
+        "系统设计",
+        "工作内容",
+        "职责",
+        "成果",
+        "结果",
+    )
+    return text.startswith(prefixes)
+
+
+def _is_detail_label(text: str) -> bool:
+    label = text.strip().lower()
+    detail_labels = {
+        "玩法设计",
+        "系统设计",
+        "技术实现",
+        "规则实现",
+        "文档输出",
+        "项目定位",
+        "项目成果",
+        "主要成果",
+        "核心职责",
+        "工作内容",
+        "职责",
+        "成果",
+        "结果",
+        "背景",
+        "目标",
+        "亮点",
+    }
+    return label in detail_labels or label.endswith(("设计", "实现", "输出", "职责", "成果"))
 
 
 def _looks_like_detail_heading(text: str) -> bool:
