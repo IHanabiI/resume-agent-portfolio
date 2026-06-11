@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from src.schemas import ResumeStructure
+from src.resume_markdown_normalizer import normalize_resume_project_blocks
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -84,7 +85,7 @@ def guard_final_resume(
     original_titles = _original_titles(original_structure)
     lines = _remove_forbidden_sections(text.split("\n"), warnings, original_titles)
     lines = _clean_lines(lines, warnings)
-    lines = _promote_project_item_headings(lines, warnings)
+    lines = normalize_resume_project_blocks("\n".join(lines)).split("\n")
     cleaned = _normalize_blank_lines(lines).strip()
 
     if original_structure:

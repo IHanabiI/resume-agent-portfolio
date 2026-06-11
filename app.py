@@ -95,6 +95,7 @@ def load_app_modules():
         upsert_job,
     )
     from src.llm_client import pretty_json
+    from src.resume_markdown_normalizer import normalize_resume_project_blocks
     from src import memory_store
     from src.workspace_store import (
         WorkspaceSnapshot,
@@ -191,6 +192,7 @@ def load_app_modules():
         "run_generation": run_generation,
         "run_generation_stream": run_generation_stream,
         "pretty_json": pretty_json,
+        "normalize_resume_project_blocks": normalize_resume_project_blocks,
         "WorkspaceSnapshot": WorkspaceSnapshot,
         "delete_workspace": delete_workspace,
         "load_workspace": load_workspace,
@@ -1006,7 +1008,13 @@ def render_questions(modules, gap, quality=None) -> None:
                 st.session_state.generation_state = _run_generation_with_progress(modules, state)
                 tailored = st.session_state.generation_state["tailored_resume"]
                 fact_check = st.session_state.generation_state["fact_check"]
-                resume_md = fact_check.final_resume_markdown or tailored.resume_markdown
+                resume_md = modules["normalize_resume_project_blocks"](
+                    fact_check.final_resume_markdown or tailored.resume_markdown
+                )
+                if hasattr(fact_check, "final_resume_markdown"):
+                    fact_check.final_resume_markdown = resume_md
+                if hasattr(tailored, "resume_markdown"):
+                    tailored.resume_markdown = resume_md
                 st.session_state.editable_resume_markdown = resume_md
                 modules["save_markdown"](resume_md, modules["OUTPUT_DIR"], "tailored_resume.md")
                 modules["save_docx"](resume_md, modules["OUTPUT_DIR"], "tailored_resume.docx")
@@ -1023,7 +1031,9 @@ def render_questions(modules, gap, quality=None) -> None:
                         fit_matched_points=fit.matched_points if fit else None,
                         suggested_resume_angle=fit.suggested_resume_angle if fit else "",
                     )
-                    package_resume = fact_check.final_resume_markdown or tailored.resume_markdown
+                    package_resume = modules["normalize_resume_project_blocks"](
+                        fact_check.final_resume_markdown or tailored.resume_markdown
+                    )
                     placeholders = _extract_placeholders(
                         "\n\n".join(
                             [
@@ -2349,7 +2359,9 @@ def _merge_memory_candidates_into_text(memory_text: str, candidates, round_numbe
 
 
 def _save_edited_resume_package(modules, tailored, fact_check) -> None:
-    edited_resume = st.session_state.editable_resume_markdown.strip()
+    edited_resume = modules["normalize_resume_project_blocks"](
+        st.session_state.editable_resume_markdown.strip()
+    )
     if not edited_resume:
         st.warning("简历正文为空，未保存。")
         return
@@ -2385,9 +2397,19 @@ def render_generation_section(modules) -> None:
     state = st.session_state.generation_state
     tailored = state["tailored_resume"]
     fact_check = state["fact_check"]
-    base_resume_markdown = fact_check.final_resume_markdown or tailored.resume_markdown
-    if not st.session_state.get("editable_resume_markdown"):
+    base_resume_markdown = modules["normalize_resume_project_blocks"](
+        fact_check.final_resume_markdown or tailored.resume_markdown
+    )
+    if st.session_state.get("editable_resume_markdown"):
+        st.session_state.editable_resume_markdown = modules["normalize_resume_project_blocks"](
+            st.session_state.editable_resume_markdown
+        )
+    else:
         st.session_state.editable_resume_markdown = base_resume_markdown
+    if st.session_state.get("editable_resume_textarea"):
+        st.session_state.editable_resume_textarea = modules["normalize_resume_project_blocks"](
+            st.session_state.editable_resume_textarea
+        )
 
     st.header("岗位交付材料")
     tabs = st.tabs(["定制简历", "开场白", "改动说明", "待确认", "核验信息"])

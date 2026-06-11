@@ -10,6 +10,8 @@ from io import BytesIO
 
 import markdown
 
+from src.resume_markdown_normalizer import normalize_resume_project_blocks
+
 
 def build_editable_resume_html(
     resume_markdown: str,
@@ -1304,7 +1306,7 @@ def _normalize_resume_markdown(markdown_text: str) -> str:
             indent = line[: len(line) - len(line.lstrip())]
             line = f"{indent}- {line.lstrip()[2:].strip()}"
         lines.append(line)
-    return "\n".join(lines).strip()
+    return normalize_resume_project_blocks("\n".join(lines))
 
 
 def _highlight_placeholders(rendered_html: str) -> str:

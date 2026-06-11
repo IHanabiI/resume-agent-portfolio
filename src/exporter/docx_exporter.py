@@ -13,6 +13,8 @@ from docx.text.paragraph import Paragraph
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 
+from src.resume_markdown_normalizer import normalize_resume_project_blocks
+
 
 def markdown_to_docx_bytes(markdown_text: str) -> bytes:
     doc = Document()
@@ -64,6 +66,7 @@ def _apply_resume_base_styles(doc: DocumentObject) -> None:
 
 
 def _append_markdown_resume(doc: DocumentObject, markdown_text: str) -> None:
+    markdown_text = normalize_resume_project_blocks(markdown_text)
     for raw_line in markdown_text.splitlines():
         line = raw_line.strip()
         if not line:
