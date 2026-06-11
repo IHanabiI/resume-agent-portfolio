@@ -5,14 +5,25 @@ import re
 from urllib.parse import urlparse
 
 import requests
+import urllib3
+from requests import exceptions as request_exceptions
 
 from src.schemas import GitHubContext, GitHubRepositoryEvidence
 
 
 GITHUB_API = "https://api.github.com"
+GITHUB_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "resume-agent-github-reader",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
+
+_ssl_fallback_used = False
 
 
 def collect_github_context(input_text: str, max_repos: int = 6) -> GitHubContext:
+    global _ssl_fallback_used
+    _ssl_fallback_used = False
     targets = _parse_targets(input_text)
     if not targets:
         return GitHubContext(source=input_text, summary="未识别到 GitHub 用户名或仓库链接。")
@@ -55,6 +66,8 @@ def collect_github_context(input_text: str, max_repos: int = 6) -> GitHubContext
     )
     if errors:
         summary += f" 读取提示：{'；'.join(errors[:3])}"
+    if _ssl_fallback_used:
+        summary += " 本机 Python 证书链校验失败，已对 GitHub 公共 API 使用宽松验证重试。"
     return GitHubContext(
         source=input_text,
         profile_url=profile_url,
@@ -111,13 +124,10 @@ def _parse_targets(text: str) -> list[tuple[str, str]]:
 
 
 def _fetch_user_repos(owner: str, max_repos: int) -> list[dict]:
-    response = requests.get(
+    return _get_json(
         f"{GITHUB_API}/users/{owner}/repos",
         params={"sort": "updated", "direction": "desc", "per_page": max_repos},
-        timeout=15,
     )
-    response.raise_for_status()
-    return response.json()
 
 
 def _fetch_repo(owner: str, repo: str, repo_info: dict | None = None) -> GitHubRepositoryEvidence | None:
@@ -150,10 +160,22 @@ def _fetch_readme_excerpt(owner: str, repo: str) -> str:
         return ""
 
 
-def _get_json(url: str) -> dict:
-    response = requests.get(url, timeout=15)
+def _get_json(url: str, params: dict | None = None) -> dict:
+    response = _github_get(url, params=params)
     response.raise_for_status()
     return response.json()
+
+
+def _github_get(url: str, params: dict | None = None) -> requests.Response:
+    global _ssl_fallback_used
+    try:
+        return requests.get(url, params=params, headers=GITHUB_HEADERS, timeout=15)
+    except request_exceptions.SSLError:
+        if not url.startswith(GITHUB_API):
+            raise
+        _ssl_fallback_used = True
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        return requests.get(url, params=params, headers=GITHUB_HEADERS, timeout=15, verify=False)
 
 
 def _clean_text(text: str) -> str:

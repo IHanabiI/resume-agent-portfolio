@@ -2613,7 +2613,10 @@ def render_context_section(modules) -> None:
                     context = modules["collect_github_context"](st.session_state.github_input)
                     st.session_state.github_context = modules["github_context_to_text"](context)
                     _auto_save_workspace(modules, modules["get_settings"]())
-                st.success("GitHub 信息读取完成。")
+                if context.repositories:
+                    st.success(f"GitHub 信息读取完成，已收集 {len(context.repositories)} 个公开仓库。")
+                else:
+                    st.warning(context.summary or "没有读取到可用的 GitHub 公开仓库。")
 
         if st.session_state.github_context:
             st.text_area("已收集到的 GitHub 证据", value=st.session_state.github_context, height=220)
