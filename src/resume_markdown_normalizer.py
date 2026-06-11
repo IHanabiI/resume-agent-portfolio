@@ -8,17 +8,21 @@ BULLET_RE = re.compile(r"^(\s*)([-*+•‣▪]|\d+[.、])\s+(.+?)\s*$")
 
 
 def normalize_resume_project_blocks(markdown_text: str) -> str:
-    """Make project sections scan as project headings with nested detail bullets."""
+    """Normalize resume bullets for skill sections and project blocks."""
     lines = []
     in_project_section = False
     project_section_level = 0
     in_project_item = False
+    skip_project_item = False
+    in_skill_section = False
+    skill_section_level = 0
 
     for raw in (markdown_text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = _normalize_bullet_marker(raw.rstrip())
         stripped = line.strip()
         if not stripped:
-            lines.append("")
+            if not skip_project_item:
+                lines.append("")
             continue
 
         heading = HEADING_RE.match(stripped)
@@ -29,20 +33,52 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
                 in_project_section = False
                 project_section_level = 0
                 in_project_item = False
+                skip_project_item = False
+            if in_skill_section and level <= skill_section_level:
+                in_skill_section = False
+                skill_section_level = 0
+
             if _is_project_section_title(title):
                 in_project_section = True
                 project_section_level = level
                 in_project_item = False
+                skip_project_item = False
             elif in_project_section and level == project_section_level + 1:
                 in_project_item = True
+                skip_project_item = _is_forbidden_project_title(title)
+
+            if _is_skill_section_title(title):
+                in_skill_section = True
+                skill_section_level = level
+
+            if skip_project_item:
+                continue
             lines.append(stripped)
+            continue
+
+        if in_project_section and skip_project_item:
+            if _looks_like_project_header_bullet(stripped):
+                bullet = BULLET_RE.match(stripped)
+                text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
+                if _is_forbidden_project_title(text):
+                    continue
+                lines.append(f"### {text}")
+                in_project_item = True
+                skip_project_item = False
             continue
 
         if in_project_section and _looks_like_project_header_bullet(stripped):
             bullet = BULLET_RE.match(stripped)
             text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
+            skip_project_item = _is_forbidden_project_title(text)
+            if skip_project_item:
+                in_project_item = False
+                continue
             lines.append(f"### {text}")
             in_project_item = True
+            continue
+
+        if skip_project_item:
             continue
 
         if in_project_section and in_project_item and _looks_like_project_detail_bullet(stripped):
@@ -54,6 +90,13 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
 
         if in_project_section and in_project_item and _looks_like_project_detail_paragraph(stripped):
             text = _clean_project_detail_text(stripped)
+            if text:
+                lines.append(f"- {text}")
+            continue
+
+        if in_skill_section and _looks_like_skill_detail_line(stripped):
+            bullet = BULLET_RE.match(stripped)
+            text = _clean_skill_text(bullet.group(3) if bullet else stripped)
             if text:
                 lines.append(f"- {text}")
             continue
@@ -90,6 +133,21 @@ def _is_project_section_title(title: str) -> bool:
     return any(term in normalized for term in ("项目经历", "项目经验", "项目实践", "项目作品", "project"))
 
 
+def _is_skill_section_title(title: str) -> bool:
+    normalized = title.lower().replace(" ", "")
+    return any(term in normalized for term in ("专业技能", "技能", "技能特长", "技术栈", "核心能力", "skills"))
+
+
+def _is_forbidden_project_title(title: str) -> bool:
+    normalized = title.lower().replace(" ", "")
+    forbidden_terms = (
+        "gameplayanalyzeragent",
+        "游戏源文件玩法拆解工作流",
+        "玩法拆解工作流",
+    )
+    return any(term in normalized for term in forbidden_terms)
+
+
 def _looks_like_project_header_bullet(line: str) -> bool:
     bullet = BULLET_RE.match(line)
     if not bullet:
@@ -121,6 +179,15 @@ def _looks_like_project_detail_bullet(line: str) -> bool:
     return not _looks_like_project_header_bullet(line)
 
 
+def _looks_like_skill_detail_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if HEADING_RE.match(stripped):
+        return False
+    return len(stripped) >= 3
+
+
 def _looks_like_project_detail_paragraph(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
@@ -141,6 +208,13 @@ def _clean_project_heading_text(text: str) -> str:
 
 
 def _clean_project_detail_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^[-*+•‣▪]\s+", "", cleaned).strip()
+    cleaned = cleaned.replace("**", "").strip()
+    return cleaned
+
+
+def _clean_skill_text(text: str) -> str:
     cleaned = (text or "").strip()
     cleaned = re.sub(r"^[-*+•‣▪]\s+", "", cleaned).strip()
     cleaned = cleaned.replace("**", "").strip()
@@ -170,6 +244,7 @@ def _starts_with_detail_or_action(text: str) -> bool:
         "独立设计",
         "设计",
         "使用",
+        "面向",
         "围绕",
         "完成",
         "实现",
@@ -179,11 +254,18 @@ def _starts_with_detail_or_action(text: str) -> bool:
         "主导",
         "推动",
         "输出",
+        "抽取",
+        "识别",
         "整理",
         "分析",
         "优化",
         "通过",
         "基于",
+        "默认",
+        "预留",
+        "后续",
+        "自动扫描",
+        "在",
         "接入",
         "编写",
         "维护",
