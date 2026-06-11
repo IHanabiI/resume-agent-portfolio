@@ -22,15 +22,60 @@ if str(ROOT) not in sys.path:
 st.set_page_config(page_title="简历定制 Agent", layout="wide")
 
 
+def _fallback_shortlist_delivery_html(
+    *,
+    jobs,
+    title: str = "求职 Shortlist",
+    photo_data_uri: str = "",
+    storage_key: str = "resume-agent-shortlist",
+) -> str:
+    import html as html_lib
+
+    rows = []
+    for index, job in enumerate(jobs, start=1):
+        company = html_lib.escape(getattr(job, "company", "") or "未填写公司")
+        job_title = html_lib.escape(getattr(job, "title", "") or "未命名岗位")
+        score = html_lib.escape(str(getattr(job, "match_score", "") or "未评分"))
+        resume = html_lib.escape(getattr(job, "package_resume_markdown", "") or "该岗位尚未生成定制简历。")
+        opener = html_lib.escape(getattr(job, "package_opener_markdown", "") or "暂无开场白。")
+        changelog = html_lib.escape(getattr(job, "package_changelog_markdown", "") or "暂无改动说明。")
+        rows.append(
+            f"""
+            <section class="job">
+              <h2>#{index} {company} - {job_title}</h2>
+              <p class="meta">匹配度：{score}</p>
+              <h3>简历正文</h3><pre>{resume}</pre>
+              <h3>开场白</h3><pre>{opener}</pre>
+              <h3>改动说明</h3><pre>{changelog}</pre>
+            </section>
+            """
+        )
+    safe_title = html_lib.escape(title or "求职 Shortlist")
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+    body {{ font-family: "Microsoft YaHei", Arial, sans-serif; margin: 32px; color: #111827; background: #f8fafc; }}
+    h1 {{ margin-bottom: 20px; }}
+    .job {{ background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 20px; margin: 0 0 18px; }}
+    .meta {{ color: #64748b; }}
+    pre {{ white-space: pre-wrap; background: #f8fafc; border: 1px solid #e5e7eb; padding: 12px; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <h1>{safe_title}</h1>
+  {''.join(rows)}
+</body>
+</html>"""
+
+
 def load_app_modules():
     from src.config import OUTPUT_DIR, get_settings
     from src.exporter.docx_exporter import markdown_to_docx_bytes, markdown_to_template_docx_bytes, save_docx
-    from src.exporter.html_resume_exporter import (
-        build_editable_resume_html,
-        build_job_delivery_html,
-        build_shortlist_delivery_html,
-        extract_first_docx_image_data_uri,
-    )
+    from src.exporter import html_resume_exporter
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
@@ -105,6 +150,15 @@ def load_app_modules():
                     )
                 ]
             return json.dumps(memory.model_dump(), ensure_ascii=False, indent=2)
+
+    build_editable_resume_html = html_resume_exporter.build_editable_resume_html
+    build_job_delivery_html = html_resume_exporter.build_job_delivery_html
+    build_shortlist_delivery_html = getattr(
+        html_resume_exporter,
+        "build_shortlist_delivery_html",
+        _fallback_shortlist_delivery_html,
+    )
+    extract_first_docx_image_data_uri = html_resume_exporter.extract_first_docx_image_data_uri
 
     return {
         "OUTPUT_DIR": OUTPUT_DIR,
