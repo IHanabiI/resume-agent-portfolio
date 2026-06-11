@@ -184,14 +184,15 @@ def _promote_project_item_headings(lines: list[str], warnings: list[str]) -> lis
     """Restore scan-friendly project blocks in project sections.
 
     The reference job-hunt flow keeps project/company entries as block headers
-    and only places actions/results inside the block as bullets. Some models
-    flatten project headers into bullets, which makes the final resume hard to
-    scan. This pass only promotes likely project-header bullets inside project
-    sections; responsibility/result bullets stay unchanged.
+    and keeps actions/results visually under that block. Some models flatten
+    project headers and project details into peer bullets, which makes the
+    final resume hard to scan. This pass promotes likely project-header bullets
+    and turns their following detail bullets into plain paragraphs.
     """
     promoted: list[str] = []
     in_project_section = False
     project_section_level = 0
+    in_project_item = False
 
     for line in lines:
         stripped = line.strip()
@@ -202,9 +203,13 @@ def _promote_project_item_headings(lines: list[str], warnings: list[str]) -> lis
             if in_project_section and level <= project_section_level:
                 in_project_section = False
                 project_section_level = 0
+                in_project_item = False
             if _is_project_section_title(title):
                 in_project_section = True
                 project_section_level = level
+                in_project_item = False
+            elif in_project_section and level == project_section_level + 1:
+                in_project_item = True
             promoted.append(line)
             continue
 
@@ -212,6 +217,14 @@ def _promote_project_item_headings(lines: list[str], warnings: list[str]) -> lis
             bullet = BULLET_RE.match(stripped)
             text = _clean_project_heading_text(bullet.group(3) if bullet else stripped)
             promoted.append(f"### {text}")
+            in_project_item = True
+            continue
+
+        if in_project_section and in_project_item and _looks_like_project_detail_bullet(stripped):
+            bullet = BULLET_RE.match(stripped)
+            text = _clean_project_detail_text(bullet.group(3) if bullet else stripped)
+            if text:
+                promoted.append(text)
             continue
 
         promoted.append(line)
@@ -342,12 +355,29 @@ def _looks_like_project_header_bullet(line: str) -> bool:
     return _has_project_header_signal(text, lead)
 
 
+def _looks_like_project_detail_bullet(line: str) -> bool:
+    bullet = BULLET_RE.match(line)
+    if not bullet:
+        return False
+    text = _clean_project_detail_text(bullet.group(3))
+    if not text or len(text) < 4:
+        return False
+    return not _looks_like_project_header_bullet(line)
+
+
 def _clean_project_heading_text(text: str) -> str:
     cleaned = (text or "").strip()
     cleaned = re.sub(r"^[-*+]\s+", "", cleaned).strip()
     cleaned = re.sub(r"^\*\*(.+?)\*\*$", r"\1", cleaned).strip()
     cleaned = cleaned.replace("**", "").strip()
     return cleaned.rstrip("。；;")
+
+
+def _clean_project_detail_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^[-*+]\s+", "", cleaned).strip()
+    cleaned = cleaned.replace("**", "").strip()
+    return cleaned
 
 
 def _first_project_separator_index(text: str) -> int:
