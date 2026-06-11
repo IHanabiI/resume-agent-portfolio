@@ -405,6 +405,7 @@ def _starts_with_detail_or_action(text: str) -> bool:
         "设计",
         "使用",
         "围绕",
+        "处理",
         "完成",
         "实现",
         "搭建",

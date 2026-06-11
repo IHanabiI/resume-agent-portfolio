@@ -104,8 +104,18 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
                 in_project_item = False
                 skip_project_item = False
             elif in_project_section and level == project_section_level + 1:
-                in_project_item = True
-                skip_project_item = _is_forbidden_project_title(title)
+                if _is_forbidden_project_title(title):
+                    in_project_item = False
+                    skip_project_item = True
+                elif _looks_like_project_header_text(title):
+                    in_project_item = True
+                    skip_project_item = False
+                else:
+                    if in_project_item:
+                        detail = _clean_project_detail_text(title)
+                        if detail:
+                            lines.append(f"- {detail}")
+                    continue
 
             if _is_skill_section_title(title):
                 in_skill_section = True
@@ -391,6 +401,7 @@ def _starts_with_detail_or_action(text: str) -> bool:
         "使用",
         "面向",
         "围绕",
+        "处理",
         "完成",
         "实现",
         "搭建",
