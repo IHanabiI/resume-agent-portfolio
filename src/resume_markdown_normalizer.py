@@ -45,7 +45,9 @@ PROJECT_HEADER_HINTS = (
     "RepoDeltaForce -",
     "RepoDeltaForce /",
     "简历定制 Agent /",
+    "简历定制 Agent -",
     "Resume Agent -",
+    "Resume Agent /",
     "resume-agent-portfolio",
 )
 
@@ -288,6 +290,8 @@ def _looks_like_project_header_text(text: str) -> bool:
         return False
     if HEADING_RE.match(text) or _starts_with_detail_or_action(text):
         return False
+    if not _has_explicit_project_header_hint(text):
+        return False
 
     separator_index = _first_project_separator_index(text)
     if separator_index == -1 or separator_index > 42:
@@ -303,6 +307,11 @@ def _looks_like_project_header_text(text: str) -> bool:
 def _project_heading_from_line(line: str) -> str:
     bullet = BULLET_RE.match(line)
     return _clean_project_heading_text(bullet.group(3) if bullet else line)
+
+
+def _has_explicit_project_header_hint(text: str) -> bool:
+    lowered = text.lower()
+    return any(hint.lower() in lowered for hint in PROJECT_HEADER_HINTS)
 
 
 def _looks_like_project_detail_bullet(line: str) -> bool:

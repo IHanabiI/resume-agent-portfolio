@@ -128,6 +128,7 @@ def _complete_result(
     github_context: str,
     alignment_plan: ResumeAlignmentPlan | None,
 ) -> TailoredResumeResult:
+    result.resume_markdown = _ensure_resume_agent_project(result.resume_markdown, github_context)
     if not result.opener_markdown:
         result.opener_markdown = _build_opener(candidate, job, gap, github_context)
     if not result.changelog_markdown:
@@ -139,6 +140,72 @@ def _complete_result(
             alignment_plan,
         )
     return result
+
+
+def _ensure_resume_agent_project(resume_markdown: str, github_context: str) -> str:
+    if not _has_resume_agent_evidence(github_context):
+        return resume_markdown
+    if _has_resume_agent_project(resume_markdown):
+        return resume_markdown
+
+    lines = (resume_markdown or "").rstrip().splitlines()
+    if not lines:
+        lines = ["# 候选人"]
+
+    block = [
+        "### 简历定制 Agent / Resume Agent - LangGraph + Streamlit 简历定制工作流 | Python / LangGraph / Streamlit / 独立完成",
+        "- 基于 LangGraph 拆分岗位分析、简历解析、匹配缺口诊断、追问、简历生成和事实校验节点，形成可在 Web 端使用的简历定制工作流。",
+        "- 支持原始简历、岗位 JD、个人记忆库和 GitHub 公开证据共同作为事实来源，降低把 JD 要求误写成真实经历的风险。",
+        "- 实现 Markdown / DOCX 导出、HTML 预览编辑、岗位库、Shortlist 和工作区 Key 恢复，便于自用测试和求职展示交付。",
+    ]
+
+    project_heading_index = _find_project_section_index(lines)
+    if project_heading_index == -1:
+        insert_at = _find_before_late_resume_sections(lines)
+        return "\n".join(lines[:insert_at] + ["", "## 项目经历", *block, ""] + lines[insert_at:]).strip()
+
+    insert_at = _find_project_section_end(lines, project_heading_index)
+    prefix = lines[:insert_at]
+    suffix = lines[insert_at:]
+    spacer_before = [] if prefix and not prefix[-1].strip() else [""]
+    spacer_after = [] if not suffix or not suffix[0].strip() else [""]
+    return "\n".join(prefix + spacer_before + block + spacer_after + suffix).strip()
+
+
+def _has_resume_agent_evidence(github_context: str) -> bool:
+    lowered = (github_context or "").lower()
+    required = ("resume-agent-portfolio", "简历定制 agent", "langgraph", "streamlit")
+    return "resume-agent-portfolio" in lowered and any(term in lowered for term in required[1:])
+
+
+def _has_resume_agent_project(resume_markdown: str) -> bool:
+    lowered = (resume_markdown or "").lower()
+    return any(term in lowered for term in ("resume-agent-portfolio", "简历定制 agent", "resume agent"))
+
+
+def _find_project_section_index(lines: list[str]) -> int:
+    for index, line in enumerate(lines):
+        normalized = line.strip().lower().replace(" ", "")
+        if normalized.startswith("##") and any(term in normalized for term in ("项目经历", "项目经验", "项目实践", "项目作品", "project")):
+            return index
+    return -1
+
+
+def _find_project_section_end(lines: list[str], project_heading_index: int) -> int:
+    for index in range(project_heading_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("## ") and not stripped.startswith("### "):
+            return index
+    return len(lines)
+
+
+def _find_before_late_resume_sections(lines: list[str]) -> int:
+    late_terms = ("教育背景", "教育经历", "自我评价", "个人优势", "求职意向")
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("## ") and any(term in stripped for term in late_terms):
+            return index
+    return len(lines)
 
 
 def _fallback_write(
@@ -154,6 +221,7 @@ def _fallback_write(
 ) -> TailoredResumeResult:
     base_resume = (ordered_resume_draft or resume_text or "").strip()
     if base_resume:
+        base_resume = _ensure_resume_agent_project(base_resume, github_context)
         return TailoredResumeResult(
             resume_markdown=base_resume,
             opener_markdown=_build_opener(candidate, job, gap, github_context),
