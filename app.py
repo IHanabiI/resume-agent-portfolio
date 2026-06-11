@@ -245,7 +245,7 @@ def _run_generation_with_progress(modules, state):
 
     if latest_state is None:
         latest_state = modules["run_generation"](state)
-    progress.progress(100, text="生成完成，正在保存文件...")
+    progress.progress(100, text="生成步骤已完成。")
     return latest_state
 
 
