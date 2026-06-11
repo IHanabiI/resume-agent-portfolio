@@ -171,7 +171,8 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
 
         lines.append(stripped)
 
-    return _normalize_blank_lines(lines).strip()
+    normalized = _normalize_blank_lines(lines)
+    return _normalize_self_evaluation_sections(normalized).strip()
 
 
 def _restore_collapsed_resume_structure(markdown_text: str) -> str:
@@ -245,6 +246,40 @@ def _normalize_blank_lines(lines: list[str]) -> str:
     return "\n".join(normalized)
 
 
+def _normalize_self_evaluation_sections(markdown_text: str) -> str:
+    lines = markdown_text.splitlines()
+    normalized: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        heading = HEADING_RE.match(line.strip())
+        if not heading or not _is_self_evaluation_section_title(heading.group(2).strip()):
+            normalized.append(line)
+            index += 1
+            continue
+
+        level = len(heading.group(1))
+        normalized.append(line.strip())
+        index += 1
+
+        paragraph_parts: list[str] = []
+        while index < len(lines):
+            current = lines[index].strip()
+            current_heading = HEADING_RE.match(current)
+            if current_heading and len(current_heading.group(1)) <= level:
+                break
+            if current:
+                paragraph_parts.append(_clean_self_evaluation_text(current))
+            index += 1
+
+        paragraph = "".join(part for part in paragraph_parts if part)
+        if paragraph:
+            normalized.append(paragraph)
+
+    return _normalize_blank_lines(normalized)
+
+
 def _is_project_section_title(title: str) -> bool:
     normalized = title.lower().replace(" ", "")
     return any(term in normalized for term in ("项目经历", "项目经验", "项目实践", "项目作品", "project"))
@@ -253,6 +288,11 @@ def _is_project_section_title(title: str) -> bool:
 def _is_skill_section_title(title: str) -> bool:
     normalized = title.lower().replace(" ", "")
     return any(term in normalized for term in ("专业技能", "技能", "技能特长", "技术栈", "核心能力", "skills"))
+
+
+def _is_self_evaluation_section_title(title: str) -> bool:
+    normalized = title.lower().replace(" ", "")
+    return any(term in normalized for term in ("自我评价", "个人评价", "个人简介", "自我介绍", "aboutme"))
 
 
 def _is_forbidden_project_title(title: str) -> bool:
@@ -372,6 +412,17 @@ def _clean_project_detail_text(text: str) -> str:
 def _clean_skill_text(text: str) -> str:
     cleaned = (text or "").strip()
     cleaned = re.sub(r"^[-*+•‣▪]\s+", "", cleaned).strip()
+    cleaned = cleaned.replace("**", "").strip()
+    return cleaned
+
+
+def _clean_self_evaluation_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    heading = HEADING_RE.match(cleaned)
+    if heading:
+        cleaned = heading.group(2).strip()
+    cleaned = re.sub(r"^[-*+•‣▪]\s+", "", cleaned).strip()
+    cleaned = re.sub(r"^\d+[.、]\s+", "", cleaned).strip()
     cleaned = cleaned.replace("**", "").strip()
     return cleaned
 
