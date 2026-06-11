@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from src.agents.alignment_planner_agent import build_alignment_plan
 from src.agents.fact_checker_agent import fact_check_resume
 from src.agents.jd_analyzer_agent import analyze_jd
@@ -81,6 +83,7 @@ def sufficiency_node(state: ResumeAgentState) -> ResumeAgentState:
 
 
 def alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
+    started_at = _start_generation_node("plan_alignment")
     llm = get_llm_client()
     plan = build_alignment_plan(
         state["candidate_profile"],
@@ -95,18 +98,20 @@ def alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("github_context", ""),
         llm,
     )
-    return {"alignment_plan": plan}
+    return _finish_generation_node(state, "plan_alignment", {"alignment_plan": plan}, started_at)
 
 
 def apply_alignment_plan_node(state: ResumeAgentState) -> ResumeAgentState:
+    started_at = _start_generation_node("apply_alignment_plan")
     draft = build_ordered_resume_draft(
         state.get("resume_structure"),
         state.get("alignment_plan"),
     )
-    return {"ordered_resume_draft": draft}
+    return _finish_generation_node(state, "apply_alignment_plan", {"ordered_resume_draft": draft}, started_at)
 
 
 def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
+    started_at = _start_generation_node("write_resume")
     llm = get_llm_client()
     result = write_resume(
         state["candidate_profile"],
@@ -122,10 +127,11 @@ def write_resume_node(state: ResumeAgentState) -> ResumeAgentState:
         state.get("github_context", ""),
         llm,
     )
-    return {"tailored_resume": result}
+    return _finish_generation_node(state, "write_resume", {"tailored_resume": result}, started_at)
 
 
 def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
+    started_at = _start_generation_node("fact_check")
     llm = get_llm_client()
     tailored = state["tailored_resume"]
     checked, guarded_resume, guard_warnings, execution_warnings = _check_guard_and_audit(state, tailored, llm)
@@ -159,7 +165,12 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
         guarded_resume,
         all_warnings,
     )
-    return {"fact_check": checked, "tailored_resume": tailored}
+    return _finish_generation_node(
+        state,
+        "fact_check",
+        {"fact_check": checked, "tailored_resume": tailored},
+        started_at,
+    )
 
 
 def _check_guard_and_audit(
@@ -196,3 +207,23 @@ def _should_retry_after_audit(execution_warnings: list[str]) -> bool:
         "计划未明显执行",
     ]
     return any(any(marker in warning for marker in retry_markers) for warning in execution_warnings)
+
+
+def _start_generation_node(node_name: str) -> float:
+    print(f"[resume-agent] generation node started: {node_name}", flush=True)
+    return time.perf_counter()
+
+
+def _finish_generation_node(
+    state: ResumeAgentState,
+    node_name: str,
+    result: dict,
+    started_at: float,
+) -> ResumeAgentState:
+    elapsed = time.perf_counter() - started_at
+    timings = dict(state.get("workflow_timings", {}))
+    timings[node_name] = round(elapsed, 2)
+    print(f"[resume-agent] generation node finished: {node_name} ({elapsed:.2f}s)", flush=True)
+    merged = dict(result)
+    merged["workflow_timings"] = timings
+    return merged

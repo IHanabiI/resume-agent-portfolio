@@ -37,3 +37,4 @@ class ResumeAgentState(TypedDict, total=False):
     tailored_resume: TailoredResumeResult
     fact_check: FactCheckResult
     needs_questions: bool
+    workflow_timings: dict[str, float]

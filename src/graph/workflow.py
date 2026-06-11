@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from langgraph.graph import END, StateGraph
 
 from src.graph.nodes import (
@@ -73,3 +74,26 @@ def run_analysis(
 def run_generation(state: ResumeAgentState) -> ResumeAgentState:
     app = build_generation_graph()
     return app.invoke(state)
+
+
+GENERATION_NODE_LABELS = {
+    "plan_alignment": "生成岗位对齐计划",
+    "apply_alignment_plan": "整理简历结构草稿",
+    "write_resume": "生成定制简历",
+    "fact_check": "事实校验与输出清理",
+}
+
+
+def run_generation_stream(state: ResumeAgentState) -> Iterator[dict]:
+    app = build_generation_graph()
+    current: ResumeAgentState = dict(state)
+
+    for update in app.stream(current, stream_mode="updates"):
+        for node_name, node_update in update.items():
+            if isinstance(node_update, dict):
+                current.update(node_update)
+            yield {
+                "node": node_name,
+                "label": GENERATION_NODE_LABELS.get(node_name, node_name),
+                "state": dict(current),
+            }

@@ -79,7 +79,7 @@ def load_app_modules():
     from src.exporter.markdown_exporter import build_full_markdown, save_markdown
     from src.file_parser import extract_text_from_upload
     from src.github_reader import collect_github_context, github_context_to_text
-    from src.graph.workflow import run_analysis, run_generation
+    from src.graph.workflow import run_analysis, run_generation, run_generation_stream
     from src.job_store import (
         get_active_job,
         infer_job_title_from_jd,
@@ -189,6 +189,7 @@ def load_app_modules():
         "upsert_job": upsert_job,
         "run_analysis": run_analysis,
         "run_generation": run_generation,
+        "run_generation_stream": run_generation_stream,
         "pretty_json": pretty_json,
         "WorkspaceSnapshot": WorkspaceSnapshot,
         "delete_workspace": delete_workspace,
@@ -208,6 +209,53 @@ def load_app_modules():
         "FactCheckResult": FactCheckResult,
         "UserAnswer": UserAnswer,
     }
+
+
+def _run_generation_with_progress(modules, state):
+    step_order = ["plan_alignment", "apply_alignment_plan", "write_resume", "fact_check"]
+    step_labels = {
+        "plan_alignment": "生成岗位对齐计划",
+        "apply_alignment_plan": "整理简历结构草稿",
+        "write_resume": "生成定制简历",
+        "fact_check": "事实校验与输出清理",
+    }
+    progress = st.progress(0, text="准备生成岗位交付材料...")
+    timing_box = st.empty()
+    latest_state = None
+
+    for event in modules["run_generation_stream"](state):
+        node = event.get("node", "")
+        latest_state = event.get("state") or latest_state
+        timings = latest_state.get("workflow_timings", {}) if latest_state else {}
+        step_index = step_order.index(node) + 1 if node in step_order else len(timings)
+        label = step_labels.get(node, node or "生成步骤")
+        elapsed = timings.get(node)
+        elapsed_text = f"，耗时 {elapsed:.1f}s" if isinstance(elapsed, (int, float)) else ""
+        progress.progress(
+            min(95, int(step_index * 100 / len(step_order))),
+            text=f"已完成：{label}{elapsed_text}",
+        )
+        timing_text = _format_generation_timings(timings, step_labels)
+        if timing_text:
+            timing_box.caption(timing_text)
+
+    if latest_state is None:
+        latest_state = modules["run_generation"](state)
+    progress.progress(100, text="生成完成，正在保存文件...")
+    return latest_state
+
+
+def _format_generation_timings(timings, step_labels) -> str:
+    if not timings:
+        return ""
+    parts = []
+    for node, elapsed in timings.items():
+        if isinstance(elapsed, (int, float)):
+            parts.append(f"{step_labels.get(node, node)} {elapsed:.1f}s")
+    if not parts:
+        return ""
+    total = sum(float(value) for value in timings.values() if isinstance(value, (int, float)))
+    return "耗时诊断：" + " / ".join(parts) + f" / 合计 {total:.1f}s"
 
 
 def init_state() -> None:
@@ -951,7 +999,7 @@ def render_questions(modules, gap, quality=None) -> None:
             state["memory_text"] = _combined_memory_context()
             state["github_context"] = st.session_state.github_context
             with st.spinner("正在生成简历、开场白、改动说明并执行事实校验..."):
-                st.session_state.generation_state = modules["run_generation"](state)
+                st.session_state.generation_state = _run_generation_with_progress(modules, state)
                 tailored = st.session_state.generation_state["tailored_resume"]
                 fact_check = st.session_state.generation_state["fact_check"]
                 resume_md = fact_check.final_resume_markdown or tailored.resume_markdown
