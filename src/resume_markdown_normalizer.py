@@ -8,7 +8,7 @@ BULLET_RE = re.compile(r"^(\s*)([-*+•‣▪]|\d+[.、])\s+(.+?)\s*$")
 
 
 def normalize_resume_project_blocks(markdown_text: str) -> str:
-    """Make project sections scan as project blocks instead of peer bullets."""
+    """Make project sections scan as project headings with nested detail bullets."""
     lines = []
     in_project_section = False
     project_section_level = 0
@@ -49,7 +49,13 @@ def normalize_resume_project_blocks(markdown_text: str) -> str:
             bullet = BULLET_RE.match(stripped)
             text = _clean_project_detail_text(bullet.group(3) if bullet else stripped)
             if text:
-                lines.append(text)
+                lines.append(f"- {text}")
+            continue
+
+        if in_project_section and in_project_item and _looks_like_project_detail_paragraph(stripped):
+            text = _clean_project_detail_text(stripped)
+            if text:
+                lines.append(f"- {text}")
             continue
 
         lines.append(line.rstrip())
@@ -113,6 +119,17 @@ def _looks_like_project_detail_bullet(line: str) -> bool:
     if not text or len(text) < 4:
         return False
     return not _looks_like_project_header_bullet(line)
+
+
+def _looks_like_project_detail_paragraph(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if HEADING_RE.match(stripped) or BULLET_RE.match(stripped):
+        return False
+    if _is_project_section_title(stripped):
+        return False
+    return len(stripped) >= 4
 
 
 def _clean_project_heading_text(text: str) -> str:
