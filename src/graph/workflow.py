@@ -85,15 +85,27 @@ GENERATION_NODE_LABELS = {
 
 
 def run_generation_stream(state: ResumeAgentState) -> Iterator[dict]:
-    app = build_generation_graph()
     current: ResumeAgentState = dict(state)
+    steps = [
+        ("plan_alignment", GENERATION_NODE_LABELS["plan_alignment"], alignment_plan_node),
+        ("apply_alignment_plan", GENERATION_NODE_LABELS["apply_alignment_plan"], apply_alignment_plan_node),
+        ("write_resume", GENERATION_NODE_LABELS["write_resume"], write_resume_node),
+        ("fact_check", GENERATION_NODE_LABELS["fact_check"], fact_check_node),
+    ]
 
-    for update in app.stream(current, stream_mode="updates"):
-        for node_name, node_update in update.items():
-            if isinstance(node_update, dict):
-                current.update(node_update)
-            yield {
-                "node": node_name,
-                "label": GENERATION_NODE_LABELS.get(node_name, node_name),
-                "state": dict(current),
-            }
+    for node_name, label, node_func in steps:
+        yield {
+            "node": node_name,
+            "label": label,
+            "status": "started",
+            "state": dict(current),
+        }
+        node_update = node_func(current)
+        if isinstance(node_update, dict):
+            current.update(node_update)
+        yield {
+            "node": node_name,
+            "label": label,
+            "status": "finished",
+            "state": dict(current),
+        }

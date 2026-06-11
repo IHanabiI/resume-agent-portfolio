@@ -14,6 +14,9 @@ def fact_check_resume(
     llm: LLMClient | None = None,
 ) -> FactCheckResult:
     llm = llm or LLMClient()
+    if llm.settings.fast_fact_check:
+        return _fallback_fact_check(result, resume_text, user_answers, memory_text, github_context)
+
     prompt = load_prompt("fact_checker_prompt.md")
     answer_text = "\n".join(a.answer for a in user_answers if a.answer.strip())
     checked = llm.generate_structured(

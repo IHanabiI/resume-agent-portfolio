@@ -136,7 +136,7 @@ def fact_check_node(state: ResumeAgentState) -> ResumeAgentState:
     tailored = state["tailored_resume"]
     checked, guarded_resume, guard_warnings, execution_warnings = _check_guard_and_audit(state, tailored, llm)
 
-    if _should_retry_after_audit(execution_warnings) and llm.available:
+    if _should_retry_after_audit(execution_warnings, llm) and llm.available:
         revised = revise_resume_after_audit(
             state["candidate_profile"],
             state["job_analysis"],
@@ -200,7 +200,9 @@ def _check_guard_and_audit(
     return checked, guarded_resume, guard_warnings, execution_warnings
 
 
-def _should_retry_after_audit(execution_warnings: list[str]) -> bool:
+def _should_retry_after_audit(execution_warnings: list[str], llm=None) -> bool:
+    if llm is not None and getattr(llm.settings, "fast_fact_check", False):
+        return False
     retry_markers = [
         "最终简历没有产生可比较正文变化",
         "高优先级计划未在真实 diff 中明显体现",

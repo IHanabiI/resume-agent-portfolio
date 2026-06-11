@@ -225,16 +225,20 @@ def _run_generation_with_progress(modules, state):
 
     for event in modules["run_generation_stream"](state):
         node = event.get("node", "")
+        status = event.get("status", "finished")
         latest_state = event.get("state") or latest_state
         timings = latest_state.get("workflow_timings", {}) if latest_state else {}
         step_index = step_order.index(node) + 1 if node in step_order else len(timings)
         label = step_labels.get(node, node or "生成步骤")
         elapsed = timings.get(node)
-        elapsed_text = f"，耗时 {elapsed:.1f}s" if isinstance(elapsed, (int, float)) else ""
-        progress.progress(
-            min(95, int(step_index * 100 / len(step_order))),
-            text=f"已完成：{label}{elapsed_text}",
-        )
+        if status == "started":
+            progress_value = max(1, int((step_index - 1) * 100 / len(step_order)))
+            progress_text = f"正在：{label}"
+        else:
+            elapsed_text = f"，耗时 {elapsed:.1f}s" if isinstance(elapsed, (int, float)) else ""
+            progress_value = min(95, int(step_index * 100 / len(step_order)))
+            progress_text = f"已完成：{label}{elapsed_text}"
+        progress.progress(progress_value, text=progress_text)
         timing_text = _format_generation_timings(timings, step_labels)
         if timing_text:
             timing_box.caption(timing_text)

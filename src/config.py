@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     allowed_workspace_keys: str = Field(default="Hanabi", alias="ALLOWED_WORKSPACE_KEYS")
     openai_timeout_seconds: float = Field(default=45.0, alias="OPENAI_TIMEOUT_SECONDS")
     fast_analysis_mode: bool = Field(default=True, alias="RESUME_AGENT_FAST_ANALYSIS")
+    fast_fact_check: bool = Field(default=True, alias="RESUME_AGENT_FAST_FACT_CHECK")
 
 
 @lru_cache
@@ -57,6 +58,7 @@ def _load_streamlit_secrets() -> None:
             "ALLOWED_WORKSPACE_KEYS",
             "OPENAI_TIMEOUT_SECONDS",
             "RESUME_AGENT_FAST_ANALYSIS",
+            "RESUME_AGENT_FAST_FACT_CHECK",
         ]:
             if key in secrets:
                 os.environ[key] = str(secrets[key])
