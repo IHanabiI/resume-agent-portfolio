@@ -30,6 +30,18 @@ def build_alignment_plan(
     llm: LLMClient | None = None,
 ) -> ResumeAlignmentPlan:
     llm = llm or LLMClient()
+    if llm.settings.fast_alignment_plan:
+        fallback = _fallback_plan(
+            job,
+            gap,
+            resume_star_profile,
+            resume_quality_report,
+            user_answers,
+            memory_text,
+            github_context,
+        )
+        return bind_alignment_plan_targets(fallback, resume_structure)
+
     prompt = load_prompt("alignment_planner_prompt.md")
     result = llm.generate_structured(
         "你是简历岗位对齐规划器。你只输出改写计划，不写最终简历。事实优先，禁止编造，必须保留原简历骨架。",
